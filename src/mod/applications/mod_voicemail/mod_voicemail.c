@@ -181,6 +181,7 @@ struct vm_profile {
 	switch_bool_t auto_playback_recordings;
 	switch_bool_t db_password_override;
 	switch_bool_t allow_empty_password_auth;
+	switch_bool_t keep_local_after_forward;
 	switch_thread_rwlock_t *rwlock;
 	switch_memory_pool_t *pool;
 	uint32_t flags;
@@ -682,6 +683,8 @@ vm_profile_t *profile_set_config(vm_profile_t *profile)
 									NULL, NULL, profile, vm_config_email_callback, NULL, NULL);
 	SWITCH_CONFIG_SET_ITEM_CALLBACK(profile->config[i++], "email_notify-template-file", SWITCH_CONFIG_CUSTOM, CONFIG_RELOADABLE,
 									NULL, NULL, profile, vm_config_notify_callback, NULL, NULL);
+	SWITCH_CONFIG_SET_ITEM(profile->config[i++], "email_keep-local-after-forward", SWITCH_CONFIG_BOOL, CONFIG_RELOADABLE,
+							&profile->keep_local_after_forward, SWITCH_FALSE, NULL, NULL, NULL);
 	SWITCH_CONFIG_SET_ITEM_CALLBACK(profile->config[i++], "web-template-file", SWITCH_CONFIG_CUSTOM, CONFIG_RELOADABLE,
 									NULL, NULL, profile, vm_config_web_callback, NULL, NULL);
 	SWITCH_CONFIG_SET_ITEM(profile->config[i++], "db-password-override", SWITCH_CONFIG_BOOL, CONFIG_RELOADABLE,
@@ -1777,8 +1780,6 @@ static switch_status_t listen_file(switch_core_session_t *session, vm_profile_t 
 
 			} else if (!strcmp(input, profile->delete_file_key) || (!strcmp(input, profile->email_key) && !zstr(cbt->email))) {
 				char *sql = switch_mprintf("update voicemail_msgs set flags='delete' where uuid='%s'", cbt->uuid);
-				vm_execute_sql(profile, sql, profile->mutex);
-				switch_safe_free(sql);
 				if (!strcmp(input, profile->email_key) && !zstr(cbt->email)) {
 					switch_event_t *event;
 					char *from;
@@ -1848,6 +1849,7 @@ static switch_status_t listen_file(switch_core_session_t *session, vm_profile_t 
 					} else {
 						from = switch_channel_expand_variables(channel, profile->email_from);
 					}
+					switch_channel_set_variable(channel, "voicemail_email_from", from);
 
 					if (zstr(profile->email_headers)) {
 						headers = switch_core_session_sprintf(session,
@@ -1881,13 +1883,21 @@ static switch_status_t listen_file(switch_core_session_t *session, vm_profile_t 
 						body = switch_mprintf("%u second Voicemail from %s %s", message_len, cbt->cid_name, cbt->cid_number);
 					}
 
-					switch_simple_email(cbt->email, from, header_string, body, cbt->file_path, cbt->convert_cmd, cbt->convert_ext);
 					switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_DEBUG, "Sending message to %s\n", cbt->email);
+					if (switch_simple_email(cbt->email, from, header_string, body, cbt->file_path, cbt->convert_cmd, cbt->convert_ext) == SWITCH_TRUE) {
+						TRY_CODE(switch_ivr_phrase_macro(session, VM_ACK_MACRO, "emailed", NULL, NULL));
+						if (!profile->keep_local_after_forward) {
+							vm_execute_sql(profile, sql, profile->mutex);
+						}
+					} else {
+						switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_WARNING, "Failed to email message to %s \n", cbt->email);
+					}
 					switch_safe_free(body);
-					TRY_CODE(switch_ivr_phrase_macro(session, VM_ACK_MACRO, "emailed", NULL, NULL));
 				} else {
+					vm_execute_sql(profile, sql, profile->mutex);
 					TRY_CODE(switch_ivr_phrase_macro(session, VM_ACK_MACRO, "deleted", NULL, NULL));
 				}
+				switch_safe_free(sql);
 			} else {
 				char *sql = switch_mprintf("update voicemail_msgs set flags='save' where uuid='%s'", cbt->uuid);
 				vm_execute_sql(profile, sql, profile->mutex);
@@ -1932,6 +1942,7 @@ static void update_mwi(vm_profile_t *profile, const char *id, const char *domain
 	if (total_new_messages || total_new_urgent_messages) {
 		yn = "yes";
 	}
+	switch_event_add_header_string(event, SWITCH_STACK_BOTTOM, "sofia-profile", "internal");
 	switch_event_add_header_string(event, SWITCH_STACK_BOTTOM, "MWI-Messages-Waiting", yn);
 	switch_event_add_header_string(event, SWITCH_STACK_BOTTOM, "Update-Reason", update_reason);
 	switch_event_add_header(event, SWITCH_STACK_BOTTOM, "MWI-Message-Account", "%s@%s", id, domain_name);

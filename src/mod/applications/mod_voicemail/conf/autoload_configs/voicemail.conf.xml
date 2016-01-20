@@ -63,6 +63,7 @@
 	<!-- this is the format voicemail_time will have -->
         <param name="date-fmt" value="%A, %B %d %Y, %I %M %p"/>
         <param name="email-from" value="${voicemail_account}@${voicemail_domain}"/>
+        <param name="keep-local-after-forward" value="false"/>
       </email>
       <!--<param name="storage-dir" value="/tmp"/>-->
       <!--<param name="odbc-dsn" value="dsn:user:pass"/>-->
