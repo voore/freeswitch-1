@@ -3092,7 +3092,8 @@ static switch_status_t generate_on_dtmf(switch_core_session_t *session, const sw
 					   SWITCH_STATUS_FALSE indicates pretend there never was a DTMF
 					   since we will be generating it inband now.
 					 */
-					status = SWITCH_STATUS_FALSE;
+					// status = SWITCH_STATUS_FALSE;
+					switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_ERROR, "Leaving DTMF on channel!!!!!!!!!!!\n");
 				} else {
 					free(dt);
 				}

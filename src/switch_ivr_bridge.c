@@ -443,6 +443,12 @@ static void *audio_bridge_thread(switch_thread_t *thread, void *obj)
 		}
 
 		/* if 1 channel has DTMF pass it to the other */
+		if (switch_channel_get_private(chan_a, "dtmf_generate") && switch_channel_has_dtmf(chan_a)) {
+			char *name_a = switch_channel_get_name(chan_a);
+			char *name_b = switch_channel_get_name(chan_b);
+                        switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session_a), SWITCH_LOG_ERROR, "Not sending DTMF from chan_a <%s> to chan_b <%s> because we use inband\n", name_a, name_b);
+		}
+
 		while (switch_channel_has_dtmf(chan_a)) {
 			switch_dtmf_t dtmf = { 0, 0 };
 			if (switch_channel_dequeue_dtmf(chan_a, &dtmf) == SWITCH_STATUS_SUCCESS) {
@@ -462,7 +468,7 @@ static void *audio_bridge_thread(switch_thread_t *thread, void *obj)
 
 				if (bridge_filter_dtmf) {
 					send_dtmf = 0;
-					switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session_a), SWITCH_LOG_DEBUG, "Dropping filtered DTMF received on %s\n", switch_channel_get_name(chan_a));
+					switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session_a), SWITCH_LOG_ERROR, "Dropping filtered DTMF received on %s\n", switch_channel_get_name(chan_a));
 				}
 
 				if (send_dtmf) {
