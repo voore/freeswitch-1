@@ -50,10 +50,12 @@
 
 /* If you change MAX_ROUTING_KEY_FORMAT_FIELDS then you must change the implementation of makeRoutingKey where it formats the routing key using sprintf */
 #define MAX_ROUTING_KEY_FORMAT_FIELDS 10
+#define MAX_ROUTING_KEY_FORMAT_FALLBACK_FIELDS 5
 #define MAX_AMQP_ROUTING_KEY_LENGTH 255
 
 #define TIME_STATS_TO_AGGREGATE 1024
 #define MOD_AMQP_DEBUG_TIMING 0
+#define MOD_AMQP_DEFAULT_CONTENT_TYPE "text/json"
 
 
 typedef struct {
@@ -74,12 +76,23 @@ typedef struct mod_amqp_connection_s {
   struct mod_amqp_connection_s *next;
 } mod_amqp_connection_t;
 
+typedef struct mod_amqp_keypart_s {
+  char *name[MAX_ROUTING_KEY_FORMAT_FALLBACK_FIELDS];
+  int size;
+} mod_amqp_keypart_t;
+
 typedef struct {
   char *name;
 
   char *exchange;
   char *exchange_type;
-  char *format_fields[MAX_ROUTING_KEY_FORMAT_FIELDS+1];
+  int exchange_durable;
+  int exchange_auto_delete;
+  int delivery_mode;
+  int delivery_timestamp;
+  char *content_type;
+  mod_amqp_keypart_t format_fields[MAX_ROUTING_KEY_FORMAT_FIELDS+1];
+
   
   /* Array to store the possible event subscriptions */
   int event_subscriptions;
@@ -115,6 +128,7 @@ typedef struct {
   char *name;
   
   char *exchange;
+  char *queue;
   char *binding_key;
 
   /* Note: The AMQP channel is not reentrant this MUTEX serializes sending events. */
@@ -132,17 +146,48 @@ typedef struct {
   char *custom_attr;
 } mod_amqp_command_profile_t;
 
-struct {
-  switch_memory_pool_t *pool;
+typedef struct {
+  char *name;
   
+  char *exchange;
+  char *exchange_type;
+  int exchange_durable;
+  int exchange_auto_delete;
+
+  uint32_t log_level_mask;
+
+  /* Note: The AMQP channel is not reentrant this MUTEX serializes sending events. */
+  mod_amqp_connection_t *conn_root;
+  mod_amqp_connection_t *conn_active;
+  
+  int reconnect_interval_ms;
+
+  /* Logging thread */
+  switch_thread_t *logging_thread;
+  switch_queue_t *send_queue;
+  unsigned int send_queue_size;
+
+  switch_mutex_t *mutex;
+  switch_bool_t running;
+  char *custom_attr;
+  switch_memory_pool_t *pool;
+} mod_amqp_logging_profile_t;
+
+typedef struct mod_amqp_globals_s {
+  switch_memory_pool_t *pool;
+
   switch_hash_t *producer_hash;
   switch_hash_t *command_hash;
-} globals;
+  switch_hash_t *logging_hash;
+} mod_amqp_globals_t;
+
+extern mod_amqp_globals_t mod_amqp_globals;
 
 /* utils */
 switch_status_t mod_amqp_do_config(switch_bool_t reload);
 int mod_amqp_log_if_amqp_error(amqp_rpc_reply_t x, char const *context);
 int mod_amqp_count_chars(const char* string, char ch);
+void mod_amqp_util_msg_destroy(mod_amqp_message_t **msg);
 
 /* connection */
 switch_status_t mod_amqp_connection_create(mod_amqp_connection_t **conn, switch_xml_t cfg, switch_memory_pool_t *pool);
@@ -158,11 +203,18 @@ void * SWITCH_THREAD_FUNC mod_amqp_command_thread(switch_thread_t *thread, void 
 /* producer */
 void mod_amqp_producer_event_handler(switch_event_t* evt);
 switch_status_t mod_amqp_producer_routing_key(mod_amqp_producer_profile_t *profile, char routingKey[MAX_AMQP_ROUTING_KEY_LENGTH],
-					      switch_event_t* evt, char* routingKeyEventHeaderNames[]);
+					      switch_event_t* evt, mod_amqp_keypart_t routingKeyEventHeaderNames[]);
 switch_status_t mod_amqp_producer_destroy(mod_amqp_producer_profile_t **profile);
 switch_status_t mod_amqp_producer_create(char *name, switch_xml_t cfg);
 void * SWITCH_THREAD_FUNC mod_amqp_producer_thread(switch_thread_t *thread, void *data);
 
+char *amqp_util_encode(char *key, char *dest);
+
+/* logging */
+switch_status_t mod_amqp_logging_recv(const switch_log_node_t *node, switch_log_level_t level);
+switch_status_t mod_amqp_logging_create(char *name, switch_xml_t cfg);
+switch_status_t mod_amqp_logging_destroy(mod_amqp_logging_profile_t **prof);
+void * SWITCH_THREAD_FUNC mod_amqp_logging_thread(switch_thread_t *thread, void *data);
 
 #endif /* MOD_AMQP_H */
 

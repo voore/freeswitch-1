@@ -53,7 +53,7 @@ switch_status_t mod_amqp_command_destroy(mod_amqp_command_profile_t **prof)
 	pool = profile->pool;
 
 	if (profile->name) {
-		switch_core_hash_delete(globals.command_hash, profile->name);
+		switch_core_hash_delete(mod_amqp_globals.command_hash, profile->name);
 	}
 
 	profile->running = 0;
@@ -86,7 +86,7 @@ switch_status_t mod_amqp_command_create(char *name, switch_xml_t cfg)
 	switch_xml_t params, param, connections, connection;
 	switch_threadattr_t *thd_attr = NULL;
 	switch_memory_pool_t *pool;
-	char *exchange = NULL, *binding_key = NULL;
+	char *exchange = NULL, *binding_key = NULL, *queue = NULL;
 
 	if (switch_core_new_memory_pool(&pool) != SWITCH_STATUS_SUCCESS) {
 		goto err;
@@ -119,8 +119,10 @@ switch_status_t mod_amqp_command_create(char *name, switch_xml_t cfg)
 				if ( interval && interval > 0 ) {
 					profile->reconnect_interval_ms = interval;
 				}
-			} else if (!strncmp(var, "exchange", 8)) {
+			} else if (!strncmp(var, "exchange-name", 13)) {
 				exchange = switch_core_strdup(profile->pool, val);
+			} else if (!strncmp(var, "queue-name", 10)) {
+				queue = switch_core_strdup(profile->pool, val);
 			} else if (!strncmp(var, "binding_key", 11)) {
 				binding_key = switch_core_strdup(profile->pool, val);
 			}
@@ -129,6 +131,7 @@ switch_status_t mod_amqp_command_create(char *name, switch_xml_t cfg)
 
 	/* Handle defaults of string types */
 	profile->exchange = exchange ? exchange : switch_core_strdup(profile->pool, "TAP.Commands");
+	profile->queue = queue ? queue : NULL;
 	profile->binding_key = binding_key ? binding_key : switch_core_strdup(profile->pool, "commandBindingKey");
 
 	if ((connections = switch_xml_child(cfg, "connections")) != NULL) {
@@ -151,11 +154,8 @@ switch_status_t mod_amqp_command_create(char *name, switch_xml_t cfg)
 		}
 	}
 	profile->conn_active = NULL;
-
-	if ( mod_amqp_connection_open(profile->conn_root, &(profile->conn_active), profile->name, profile->custom_attr) != SWITCH_STATUS_SUCCESS) {
-		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "Profile[%s] was unable to connect to any connection\n", profile->name);
-	}
-
+	/* We are not going to open the command queue connection on create, but instead wait for the running thread to open it */
+	
 	/* Start the worker threads */
 	switch_threadattr_create(&thd_attr, profile->pool);
 	switch_threadattr_stacksize_set(thd_attr, SWITCH_THREAD_STACKSIZE);
@@ -165,7 +165,7 @@ switch_status_t mod_amqp_command_create(char *name, switch_xml_t cfg)
 		goto err;
 	}
 
-	if ( switch_core_hash_insert(globals.command_hash, name, (void *) profile) != SWITCH_STATUS_SUCCESS) {
+	if ( switch_core_hash_insert(mod_amqp_globals.command_hash, name, (void *) profile) != SWITCH_STATUS_SUCCESS) {
 		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "Failed to insert new profile [%s] into mod_amqp profile hash\n", name);
 		goto err;
 	}
@@ -178,6 +178,61 @@ switch_status_t mod_amqp_command_create(char *name, switch_xml_t cfg)
 	return SWITCH_STATUS_GENERR;
 }
 
+static void mod_amqp_command_response(mod_amqp_command_profile_t *profile, char *command, switch_stream_handle_t stream,
+									  char *fs_resp_exchange, char *fs_resp_key, switch_status_t status)
+{
+	char *json_output = NULL;
+	amqp_basic_properties_t props;
+	cJSON *message = NULL;
+	int amqp_status = AMQP_STATUS_OK;
+
+	if (! profile->conn_active) {
+		/* No connection, so we can not send the message. */
+		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_CRIT, "Profile[%s] not active\n", profile->name);
+		return;
+	}
+
+	/* Construct the api response */
+	switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_WARNING, "Preparing api command response: [%s]\n", (char *)stream.data);
+	message = cJSON_CreateObject();
+
+	cJSON_AddItemToObject(message, "output", cJSON_CreateString((const char *) stream.data));
+	cJSON_AddItemToObject(message, "command", cJSON_CreateString(command));
+	cJSON_AddItemToObject(message, "status", cJSON_CreateNumber((double) status));
+
+	json_output = cJSON_Print(message);
+	cJSON_Delete(message);
+
+	memset(&props, 0, sizeof(amqp_basic_properties_t));
+
+	props._flags = AMQP_BASIC_CONTENT_TYPE_FLAG;
+	props.content_type = amqp_cstring_bytes("text/json");
+
+	amqp_status = amqp_basic_publish(
+								profile->conn_active->state,
+								1,
+								amqp_cstring_bytes(fs_resp_exchange),
+								amqp_cstring_bytes(fs_resp_key),
+								0,
+								0,
+								&props,
+								amqp_cstring_bytes(json_output));
+
+	switch_safe_free(json_output);
+
+	if (amqp_status != AMQP_STATUS_OK) {
+		const char *errstr = amqp_error_string2(-amqp_status);
+		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_CRIT, "Profile[%s] failed to send event on connection[%s]: %s\n",
+						  profile->name, profile->conn_active->name, errstr);
+
+		/* This is bad, we couldn't send the message. Clear up any connection */
+		mod_amqp_connection_close(profile->conn_active);
+		profile->conn_active = NULL;
+		return;
+	}
+
+	return;
+}
 
 void * SWITCH_THREAD_FUNC mod_amqp_command_thread(switch_thread_t *thread, void *data)
 {
@@ -200,11 +255,24 @@ void * SWITCH_THREAD_FUNC mod_amqp_command_thread(switch_thread_t *thread, void 
 				continue;
 			}
 
+			/* Check if exchange already exists */ 
+			amqp_exchange_declare(profile->conn_active->state, 1,
+								  amqp_cstring_bytes(profile->exchange),
+								  amqp_cstring_bytes("topic"),
+								  0, /* passive */
+								  1, /* durable */
+								  amqp_empty_table);
+
+			if (mod_amqp_log_if_amqp_error(amqp_get_rpc_reply(profile->conn_active->state), "Checking for command exchange")) {
+				switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_WARNING, "Profile[%s] failed to create missing command exchange", profile->name);
+				continue;
+			}
+
 			/* Ensure we have a queue */
 			switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_DEBUG, "Creating command queue");
 			recv_queue = amqp_queue_declare(profile->conn_active->state, // state
 											1,                           // channel
-											amqp_empty_bytes,            // queue name
+											profile->queue ? amqp_cstring_bytes(profile->queue) : amqp_empty_bytes, // queue name
 											0, 0,                        // passive, durable
 											0, 1,                        // exclusive, auto-delete
 											amqp_empty_table);           // args
@@ -273,6 +341,7 @@ void * SWITCH_THREAD_FUNC mod_amqp_command_thread(switch_thread_t *thread, void 
 				COMMAND_FORMAT_UNKNOWN,
 				COMMAND_FORMAT_PLAINTEXT
 			} commandFormat = COMMAND_FORMAT_PLAINTEXT;
+			char *fs_resp_exchange = NULL, *fs_resp_key = NULL;
 
 			amqp_maybe_release_buffers(profile->conn_active->state);
 
@@ -329,6 +398,24 @@ void * SWITCH_THREAD_FUNC mod_amqp_command_thread(switch_thread_t *thread, void 
 				}
 			}
 
+			if (envelope.message.properties.headers.num_entries) {
+				int x = 0;
+
+				for ( x = 0; x < envelope.message.properties.headers.num_entries; x++) {
+					char *header_key = (char *)envelope.message.properties.headers.entries[x].key.bytes;
+					char *header_value = (char *)envelope.message.properties.headers.entries[x].value.value.bytes.bytes;
+					switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_DEBUG, "AMQP message custom header key[%s] value[%s]\n", header_key, header_value);
+
+					if ( !strncmp(header_key, "x-fs-api-resp-exchange", 22)) {
+						fs_resp_exchange = header_value;
+					} else if (!strncmp(header_key, "x-fs-api-resp-key", 17)) {
+						fs_resp_key = header_value;
+					} else {
+						switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_DEBUG, "Ignoring unrecognized event header [%s]\n", header_key);
+					}
+				}
+			}
+
 			if (commandFormat == COMMAND_FORMAT_PLAINTEXT) {
 				switch_stream_handle_t stream = { 0 }; /* Collects the command output */
 
@@ -340,10 +427,15 @@ void * SWITCH_THREAD_FUNC mod_amqp_command_thread(switch_thread_t *thread, void 
 
 				SWITCH_STANDARD_STREAM(stream);
 
-				if (switch_console_execute(command, 0, &stream) != SWITCH_STATUS_SUCCESS) {
-					switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_WARNING, "Remote command failed:\n%s\n", (char *) stream.data);
+				if ( fs_resp_exchange && fs_resp_key ) {
+					switch_status_t status = switch_console_execute(command, 0, &stream);
+					mod_amqp_command_response(profile, command, stream, fs_resp_exchange, fs_resp_key, status);
 				} else {
-					switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_DEBUG, "Remote command succeeded:\n%s\n", (char *) stream.data);
+					if (switch_console_execute(command, 0, &stream) != SWITCH_STATUS_SUCCESS) {
+						switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_WARNING, "Remote command failed:\n%s\n", (char *) stream.data);
+					} else {
+						switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_DEBUG, "Remote command succeeded:\n%s\n", (char *) stream.data);
+					}
 				}
 				switch_safe_free(stream.data);
 			}
