@@ -1739,6 +1739,12 @@ SWITCH_DECLARE(switch_status_t) switch_sql_queue_manager_push(switch_sql_queue_m
 	switch_status_t status;
 	int x = 0;
 
+	if (!qm) {
+                switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_DEBUG1, "No query manager!! [%s]\n", sql);
+                if (!dup) free((char *)sql);
+                return SWITCH_STATUS_FALSE;
+	}
+
 	if (sql_manager.paused || qm->thread_running != 1) {
 		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_DEBUG1, "DROP [%s]\n", sql);
 		if (!dup) free((char *)sql);
@@ -1777,72 +1783,78 @@ SWITCH_DECLARE(switch_status_t) switch_sql_queue_manager_push(switch_sql_queue_m
 
 SWITCH_DECLARE(switch_status_t) switch_sql_queue_manager_push_confirm(switch_sql_queue_manager_t *qm, const char *sql, uint32_t pos, switch_bool_t dup)
 {
+	if (!qm) {
+		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_DEBUG1, "No query manager!! [%s]\n", sql);
+		if (!dup) free((char *)sql);
+		return SWITCH_STATUS_FALSE;
+	} else {
 #define EXEC_NOW
 #ifdef EXEC_NOW
-	switch_cache_db_handle_t *dbh;
+		switch_cache_db_handle_t *dbh;
 
-	if (sql_manager.paused || qm->thread_running != 1) {
-		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_DEBUG1, "DROP [%s]\n", sql);
+		if (sql_manager.paused || qm->thread_running != 1) {
+			switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_DEBUG1, "DROP [%s]\n", sql);
+			if (!dup) free((char *)sql);
+			qm_wake(qm);
+			return SWITCH_STATUS_SUCCESS;
+		}
+
+		if (switch_cache_db_get_db_handle_dsn(&dbh, qm->dsn) == SWITCH_STATUS_SUCCESS) {
+			switch_cache_db_execute_sql(dbh, (char *)sql, NULL);		
+			switch_cache_db_release_db_handle(&dbh);
+		}
+
 		if (!dup) free((char *)sql);
-		qm_wake(qm);
-		return SWITCH_STATUS_SUCCESS;
-	}
-
-	if (switch_cache_db_get_db_handle_dsn(&dbh, qm->dsn) == SWITCH_STATUS_SUCCESS) {
-		switch_cache_db_execute_sql(dbh, (char *)sql, NULL);		
-		switch_cache_db_release_db_handle(&dbh);
-	}
-
-	if (!dup) free((char *)sql);
 
 #else
 
-	int size, x = 0, sanity = 0;
-	uint32_t written, want;
+		int size, x = 0, sanity = 0;
+		uint32_t written, want;
 
-	if (sql_manager.paused) {
-		if (!dup) free((char *)sql);
-		qm_wake(qm);
-		return SWITCH_STATUS_SUCCESS;
-	}
-
-	if (qm->thread_running != 1) {
-		if (!dup) free((char *)sql);
-		return SWITCH_STATUS_FALSE;
-	}
-
-	if (pos > qm->numq - 1) {
-		pos = 0;
-	}
-
-	switch_mutex_lock(qm->mutex);
-	qm->confirm++;
-	switch_queue_push(qm->sql_queue[pos], dup ? strdup(sql) : (char *)sql);
-	written = qm->pre_written[pos];
-	size = switch_sql_queue_manager_size(qm, pos);
-	want = written + size;
-	switch_mutex_unlock(qm->mutex);
-
-	qm_wake(qm);
-
-	while((qm->written[pos] < want) || (qm->written[pos] >= written && want < written && qm->written[pos] > want)) {
-		switch_yield(5000);
-
-		if (++x == 200) {
+		if (sql_manager.paused) {
+			if (!dup) free((char *)sql);
 			qm_wake(qm);
-			x = 0;
-			if (++sanity == 20) {
-				break;
+			return SWITCH_STATUS_SUCCESS;
+		}
+
+		if (qm->thread_running != 1) {
+			if (!dup) free((char *)sql);
+			return SWITCH_STATUS_FALSE;
+		}
+
+		if (pos > qm->numq - 1) {
+			pos = 0;
+		}
+
+		switch_mutex_lock(qm->mutex);
+		qm->confirm++;
+		switch_queue_push(qm->sql_queue[pos], dup ? strdup(sql) : (char *)sql);
+		written = qm->pre_written[pos];
+		size = switch_sql_queue_manager_size(qm, pos);
+		want = written + size;
+		switch_mutex_unlock(qm->mutex);
+
+		qm_wake(qm);
+
+		while((qm->written[pos] < want) || (qm->written[pos] >= written && want < written && qm->written[pos] > want)) {
+			switch_yield(5000);
+
+			if (++x == 200) {
+				qm_wake(qm);
+				x = 0;
+				if (++sanity == 20) {
+					break;
+				}
 			}
 		}
-	}
 
-	switch_mutex_lock(qm->mutex);
-	qm->confirm--;
-	switch_mutex_unlock(qm->mutex);
+		switch_mutex_lock(qm->mutex);
+		qm->confirm--;
+		switch_mutex_unlock(qm->mutex);
 #endif
 
-	return SWITCH_STATUS_SUCCESS;
+		return SWITCH_STATUS_SUCCESS;
+	}
 }
 
 
