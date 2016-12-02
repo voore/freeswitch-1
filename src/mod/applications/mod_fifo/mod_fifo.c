@@ -917,6 +917,7 @@ static switch_status_t fifo_execute_sql_queued(char **sqlp, switch_bool_t sql_al
 {
 	int index = 1;
 	char *sql;
+	switch_status_t status = SWITCH_STATUS_SUCCESS;
 
 	switch_assert(sqlp && *sqlp);
 	sql = *sqlp;
@@ -926,16 +927,16 @@ static switch_status_t fifo_execute_sql_queued(char **sqlp, switch_bool_t sql_al
 	}
 
 	if (block) {
-		switch_sql_queue_manager_push_confirm(globals.qm, sql, index, !sql_already_dynamic);
+		status = switch_sql_queue_manager_push_confirm(globals.qm, sql, index, !sql_already_dynamic);
 	} else {
-		switch_sql_queue_manager_push(globals.qm, sql, index, !sql_already_dynamic);
+		status = switch_sql_queue_manager_push(globals.qm, sql, index, !sql_already_dynamic);
 	}
 
 	if (sql_already_dynamic) {
 		*sqlp = NULL;
 	}
 
-	return SWITCH_STATUS_SUCCESS;
+	return status;
 }
 #if 0
 static switch_status_t fifo_execute_sql(char *sql, switch_mutex_t *mutex)
@@ -4436,6 +4437,7 @@ static switch_status_t load_config(int reload, int del_all)
 
 	if (!(dbh = fifo_get_db_handle())) {
 		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_CRIT, "Cannot open DB!\n");
+		status = SWITCH_STATUS_FALSE;
 		goto done;
 	}
 
