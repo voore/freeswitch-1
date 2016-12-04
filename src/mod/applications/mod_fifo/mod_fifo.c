@@ -2141,6 +2141,7 @@ static void *SWITCH_THREAD_FUNC node_thread_run(switch_thread_t *thread, void *o
 				switch_mutex_unlock(this_node->update_mutex);
 				switch_thread_rwlock_unlock(this_node->rwlock);
 				switch_core_destroy_memory_pool(&this_node->pool);
+				switch_core_hash_delete(globals.fifo_hash, this_node->name);
 				continue;
 			}
 
