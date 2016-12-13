@@ -723,6 +723,7 @@ static struct {
 	int allow_transcoding;
 	switch_bool_t delete_all_members_on_startup;
 	outbound_strategy_t default_strategy;
+	char *custom_find_outbound_sql;
 } globals;
 
 static int fifo_dec_use_count(const char *outbound_id)
@@ -2015,14 +2016,19 @@ static int place_call_enterprise_callback(void *pArg, int argc, char **argv, cha
 static void find_consumers(fifo_node_t *node)
 {
 	char *sql;
+	if (globals.custom_find_outbound_sql) {
+		sql = switch_mprintf(globals.custom_find_outbound_sql, node->name, (long) switch_epoch_time_now(NULL));
+		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_DEBUG, "Custom SQL: [%s]\n", sql);
 
-	sql = switch_mprintf("select uuid, fifo_name, originate_string, simo_count, use_count, timeout, lag, "
+	} else {
+		sql = switch_mprintf("select uuid, fifo_name, originate_string, simo_count, use_count, timeout, lag, "
 						 "next_avail, expires, static, outbound_call_count, outbound_fail_count, hostname "
 						 "from fifo_outbound "
 						 "where taking_calls = 1 and (fifo_name = '%q') and ((use_count+ring_count) < simo_count) and (next_avail = 0 or next_avail <= %ld) "
 						 "order by next_avail, outbound_fail_count, outbound_call_count",
 						 node->name, (long) switch_epoch_time_now(NULL)
 						 );
+	}
 
 	switch(node->outbound_strategy) {
 	case NODE_STRATEGY_ENTERPRISE:
@@ -2099,7 +2105,7 @@ static void *SWITCH_THREAD_FUNC node_thread_run(switch_thread_t *thread, void *o
 
 		switch_mutex_lock(globals.mutex);
 
-		if (globals.debug) switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_DEBUG, "Trying priority: %d\n", cur_priority);
+		if (globals.debug > 3) switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_DEBUG, "Trying priority: %d\n", cur_priority);
 
 		last = NULL;
 		node = globals.nodes;
@@ -4366,6 +4372,11 @@ static void extract_fifo_outbound_uuid(char *string, char *uuid, switch_size_t l
 	switch_event_destroy(&ovars);
 }
 
+static switch_status_t fifo_set_custom_find_outbound_sql(char *val) {
+	globals.custom_find_outbound_sql = switch_core_strdup(globals.pool, val);
+	return SWITCH_STATUS_SUCCESS;
+}
+
 static switch_status_t read_config_file(switch_xml_t *xml, switch_xml_t *cfg) {
 	const char *cf = "fifo.conf";
 	switch_xml_t settings;
@@ -4402,6 +4413,10 @@ static switch_status_t read_config_file(switch_xml_t *xml, switch_xml_t *cfg) {
 				globals.inner_post_trans_execute = switch_core_strdup(globals.pool, val);
 			} else if (!strcasecmp(var, "delete-all-outbound-member-on-startup")) {
 				globals.delete_all_members_on_startup = switch_true(val);
+			} else if (!strcasecmp(var, "custom-find-outbound-sql")) {
+				if (fifo_set_custom_find_outbound_sql(val) != SWITCH_STATUS_SUCCESS && !zstr(val)) {
+					switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "Could not set 'custom-find-outbound-sql'!\n");
+				}
 			}
 		}
 	}
