@@ -1473,7 +1473,7 @@ static void *SWITCH_THREAD_FUNC outbound_ringall_thread_run(switch_thread_t *thr
 
 	switch_mutex_lock(node->update_mutex);
 	node->busy = 0;
-	node->ring_consumer_count = 1;
+	node->ring_consumer_count++;
 	switch_mutex_unlock(node->update_mutex);
 
 	SWITCH_STANDARD_STREAM(stream);
@@ -1621,7 +1621,7 @@ static void *SWITCH_THREAD_FUNC outbound_ringall_thread_run(switch_thread_t *thr
 
 	for (i = 0; i < cbh->rowcount; i++) {
 		struct call_helper *h = cbh->rows[i];
-		char *sql = switch_mprintf("update fifo_outbound set ring_count=ring_count+1 where uuid='%s'", h->uuid);
+		char *sql = switch_mprintf("update fifo_outbound set ring_count=ring_count+1 where uuid='%q'", h->uuid);
 
 		fifo_execute_sql_queued(&sql, SWITCH_TRUE, SWITCH_TRUE);
 	}
@@ -1736,7 +1736,9 @@ static void *SWITCH_THREAD_FUNC outbound_ringall_thread_run(switch_thread_t *thr
 
 	if (node) {
 		switch_mutex_lock(node->update_mutex);
-		node->ring_consumer_count = 0;
+		if (--node->ring_consumer_count < 0) {
+			node->ring_consumer_count = 0;
+		}
 		node->busy = 0;
 		switch_mutex_unlock(node->update_mutex);
 		switch_thread_rwlock_unlock(node->rwlock);
@@ -1844,7 +1846,7 @@ static void *SWITCH_THREAD_FUNC outbound_enterprise_thread_run(switch_thread_t *
 		switch_event_fire(&event);
 	}
 
-	sql = switch_mprintf("update fifo_outbound set ring_count=ring_count+1 where uuid='%s'", h->uuid);
+	sql = switch_mprintf("update fifo_outbound set ring_count=ring_count+1 where uuid='%q'", h->uuid);
 	fifo_execute_sql_queued(&sql, SWITCH_TRUE, SWITCH_TRUE);
 
 	status = switch_ivr_originate(NULL, &session, &cause, originate_string, h->timeout, NULL, NULL, NULL, NULL, ovars, SOF_NONE, NULL);
@@ -1913,7 +1915,7 @@ static void *SWITCH_THREAD_FUNC outbound_enterprise_thread_run(switch_thread_t *
 	switch_event_destroy(&ovars);
 	if (node) {
 		switch_mutex_lock(node->update_mutex);
-		if (node->ring_consumer_count-- < 0) {
+		if (--node->ring_consumer_count < 0) {
 			node->ring_consumer_count = 0;
 		}
 		node->busy = 0;
@@ -1999,23 +2001,25 @@ static int place_call_enterprise_callback(void *pArg, int argc, char **argv, cha
  * care of invoking the handler.
  *
  * Within the ringall call strategy outbound_per_cycle is used to define
- * how many agents exactly are assigned to the caller. With ringall if 
+ * how many agents exactly are assigned to the caller. With ringall if
  * multiple callers are calling in and one is answered, because the call
  * is assigned to all agents the call to the agents that is not answered
  * will be lose raced and the other agents will drop the call before the
- * next one will begin to ring. When oubound_per_cycle is used in the 
+ * next one will begin to ring. When oubound_per_cycle is used in the
  * enterprise strategy it acts as a maximum value for how many agents
- * are rung at once on any call, the caller is not assigned to any agent 
+ * are rung at once on any call, the caller is not assigned to any agent
  * until the call is answered. Enterprise only rings the number of phones
  * that are needed, so outbound_per_cycle as a max does not give you the
  * effect of ringall. outbound_per_cycle_min defines how many agents minimum
  * will be rung by an incoming caller through fifo, which can give a ringall
  * effect. outbound_per_cycle and outbound_per_cycle_min both default to 1.
- * 
+ *
  */
-static void find_consumers(fifo_node_t *node)
+static int find_consumers(fifo_node_t *node)
 {
 	char *sql;
+	int ret = 0;
+
 	if (globals.custom_find_outbound_sql) {
 		sql = switch_mprintf(globals.custom_find_outbound_sql, node->name, (long) switch_epoch_time_now(NULL));
 		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_DEBUG, "Custom SQL: [%s]\n", sql);
@@ -2034,6 +2038,7 @@ static void find_consumers(fifo_node_t *node)
 	case NODE_STRATEGY_ENTERPRISE:
 		{
 			int need = node_caller_count(node);
+			int count;
 
 			if (node->outbound_per_cycle && node->outbound_per_cycle < need) {
 				need = node->outbound_per_cycle;
@@ -2041,7 +2046,9 @@ static void find_consumers(fifo_node_t *node)
 				need = node->outbound_per_cycle_min;
 			}
 
+			count = need;
 			fifo_execute_sql_callback(globals.sql_mutex, sql, place_call_enterprise_callback, &need);
+			ret = count - need;
 		}
 		break;
 	case NODE_STRATEGY_RINGALL:
@@ -2063,6 +2070,7 @@ static void find_consumers(fifo_node_t *node)
 			fifo_execute_sql_callback(globals.sql_mutex, sql, place_call_ringall_callback, cbh);
 
 			if (cbh->rowcount) {
+				ret = cbh->rowcount;
 				switch_threadattr_create(&thd_attr, cbh->pool);
 				switch_threadattr_detach_set(thd_attr, 1);
 				switch_threadattr_stacksize_set(thd_attr, SWITCH_THREAD_STACKSIZE);
@@ -2077,6 +2085,7 @@ static void find_consumers(fifo_node_t *node)
 	}
 
 	switch_safe_free(sql);
+	return ret;
 }
 
 /*\brief Continuously attempt to deliver calls to outbound members
@@ -2101,7 +2110,7 @@ static void *SWITCH_THREAD_FUNC node_thread_run(switch_thread_t *thread, void *o
 	globals.node_thread_running = 1;
 
 	while (globals.node_thread_running == 1) {
-		int ppl_waiting, consumer_total, idle_consumers, found = 0;
+		int ppl_waiting, consumer_total, idle_consumers, need_sleep = 0;
 
 		switch_mutex_lock(globals.mutex);
 
@@ -2167,9 +2176,9 @@ static void *SWITCH_THREAD_FUNC node_thread_run(switch_thread_t *thread, void *o
 				}
 
 				if ((ppl_waiting - this_node->ring_consumer_count > 0) && (!consumer_total || !idle_consumers)) {
-					found++;
-					find_consumers(this_node);
-					switch_yield(1000000);
+					if (find_consumers(this_node)) {
+						need_sleep++;
+					}
 				}
 			}
 		}
@@ -2180,8 +2189,9 @@ static void *SWITCH_THREAD_FUNC node_thread_run(switch_thread_t *thread, void *o
 
 		switch_mutex_unlock(globals.mutex);
 
-		if (cur_priority == 1) {
+		if (cur_priority == 1 || need_sleep) {
 			switch_yield(1000000);
+			need_sleep = 0;
 		}
 	}
 
@@ -2764,6 +2774,7 @@ SWITCH_STANDARD_APP(fifo_function)
 		switch_strftime_nocheck(date, &retsize, sizeof(date), "%Y-%m-%d %T", &tm);
 		switch_channel_set_variable(channel, "fifo_status", "WAITING");
 		switch_channel_set_variable(channel, "fifo_timestamp", date);
+		switch_channel_set_variable(channel, "fifo_push_timestamp", date);
 		switch_channel_set_variable(channel, "fifo_serviced_uuid", NULL);
 
 		switch_channel_set_app_flag_key(FIFO_APP_KEY, channel, FIFO_APP_BRIDGE_TAG);
@@ -3356,7 +3367,7 @@ SWITCH_STANDARD_APP(fifo_function)
 					cancel_consumer_outbound_call(outbound_id, SWITCH_CAUSE_ORIGINATOR_CANCEL);
 					add_bridge_call(outbound_id);
 
-					sql = switch_mprintf("update fifo_outbound set stop_time=0,start_time=%ld,use_count=use_count+1,outbound_fail_count=0 where uuid='%s'",
+					sql = switch_mprintf("update fifo_outbound set stop_time=0,start_time=%ld,use_count=use_count+1,outbound_fail_count=0 where uuid='%q'",
 										 switch_epoch_time_now(NULL), outbound_id);
 
 					fifo_execute_sql_queued(&sql, SWITCH_TRUE, SWITCH_TRUE);
@@ -3437,7 +3448,7 @@ SWITCH_STANDARD_APP(fifo_function)
 
 					sql = switch_mprintf("update fifo_outbound set stop_time=%ld, use_count=use_count-1, "
 										 "outbound_call_total_count=outbound_call_total_count+1, "
-										 "outbound_call_count=outbound_call_count+1, next_avail=%ld + lag + 1 where uuid='%s' and use_count > 0",
+										 "outbound_call_count=outbound_call_count+1, next_avail=%ld + lag + 1 where uuid='%q' and use_count > 0",
 										 now, now, outbound_id);
 
 					fifo_execute_sql_queued(&sql, SWITCH_TRUE, SWITCH_TRUE);
@@ -3685,7 +3696,7 @@ static int xml_callback(void *pArg, int argc, char **argv, char **columnNames)
 	struct xml_helper *h = (struct xml_helper *) pArg;
 	switch_xml_t x_out;
 	int c_off = 0;
-	char exp_buf[128] = "";
+	char exp_buf[128] = { 0 };
 	switch_time_exp_t tm;
 	switch_time_t etime = 0;
 	char atime[128] = "";
@@ -3786,7 +3797,7 @@ static int xml_outbound(switch_xml_t xml, fifo_node_t *node, char *container, ch
 	char *sql;
 
 	if (!strcmp(node->name, MANUAL_QUEUE_NAME)) {
-		sql = switch_mprintf("select uuid, '%s', originate_string, simo_count, use_count, timeout,"
+		sql = switch_mprintf("select uuid, '%q', originate_string, simo_count, use_count, timeout,"
 							 "lag, next_avail, expires, static, outbound_call_count, outbound_fail_count,"
 							 "hostname, taking_calls, status, outbound_call_total_count, outbound_fail_total_count, active_time, inactive_time,"
 							 "manual_calls_out_count, manual_calls_in_count, manual_calls_out_total_count, manual_calls_in_total_count from fifo_outbound "
