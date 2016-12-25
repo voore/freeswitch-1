@@ -32,6 +32,8 @@
 #include <switch.h>
 #define FIFO_APP_KEY "mod_fifo"
 
+#define FIFO_PERMENANT_RECORDS
+
 SWITCH_MODULE_SHUTDOWN_FUNCTION(mod_fifo_shutdown);
 SWITCH_MODULE_LOAD_FUNCTION(mod_fifo_load);
 SWITCH_MODULE_DEFINITION(mod_fifo, mod_fifo_load, mod_fifo_shutdown, NULL);
