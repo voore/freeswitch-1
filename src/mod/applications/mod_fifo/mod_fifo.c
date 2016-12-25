@@ -723,6 +723,7 @@ static struct {
 	int allow_transcoding;
 	switch_bool_t delete_all_members_on_startup;
 	outbound_strategy_t default_strategy;
+	int default_outbound_per_cycle;
 	char *custom_find_outbound_sql;
 } globals;
 
@@ -939,36 +940,7 @@ static switch_status_t fifo_execute_sql_queued(char **sqlp, switch_bool_t sql_al
 
 	return status;
 }
-#if 0
-static switch_status_t fifo_execute_sql(char *sql, switch_mutex_t *mutex)
-{
-	switch_cache_db_handle_t *dbh = NULL;
-	switch_status_t status = SWITCH_STATUS_FALSE;
 
-	if (mutex) {
-		switch_mutex_lock(mutex);
-	}
-
-	if (!(dbh = fifo_get_db_handle())) {
-		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "Error Opening DB\n");
-		goto end;
-	}
-
-	if (globals.debug > 1) switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_CRIT, "sql: %s\n", sql);
-
-	status = switch_cache_db_execute_sql(dbh, sql, NULL);
-
-  end:
-
-	switch_cache_db_release_db_handle(&dbh);
-
-	if (mutex) {
-		switch_mutex_unlock(mutex);
-	}
-
-	return status;
-}
-#endif
 
 static switch_bool_t fifo_execute_sql_callback(switch_mutex_t *mutex, char *sql, switch_core_db_callback_func_t callback, void *pdata)
 {
@@ -1005,6 +977,98 @@ static switch_bool_t fifo_execute_sql_callback(switch_mutex_t *mutex, char *sql,
 	return ret;
 }
 
+
+#ifdef FIFO_PERMENANT_RECORDS
+
+static switch_status_t fifo_execute_sql(char *sql, switch_mutex_t *mutex)
+{
+	switch_cache_db_handle_t *dbh = NULL;
+	switch_status_t status = SWITCH_STATUS_FALSE;
+
+	if (mutex) {
+		switch_mutex_lock(mutex);
+	}
+
+	if (!(dbh = fifo_get_db_handle())) {
+		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "Error Opening DB\n");
+		goto end;
+	}
+
+	if (globals.debug > 1) switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_CRIT, "sql: %s\n", sql);
+
+	status = switch_cache_db_execute_sql(dbh, sql, NULL);
+
+  end:
+
+	switch_cache_db_release_db_handle(&dbh);
+
+	if (mutex) {
+		switch_mutex_unlock(mutex);
+	}
+
+	return status;
+}
+
+
+switch_status_t fifo_execute_permanent_sql(char **sql, switch_mutex_t *mutex, int freesql) {
+	switch_status_t status = fifo_execute_sql(*sql, mutex);
+
+	if (freesql) {
+		switch_safe_free(*sql);
+	}
+
+	return status;
+}
+
+
+struct node_settings {
+	char *ring_strategy;
+};
+
+struct node_callback {
+	switch_memory_pool_t *pool;
+	struct node_settings *settings;
+	int matches;
+};
+typedef struct node_callback node_callback_t;
+
+
+static int sql2node_callback(void *pArg, int argc, char **argv, char **columnNames)
+{
+	node_callback_t *cbt = (node_callback_t *) pArg;
+
+	cbt->settings = switch_core_alloc(cbt->pool, sizeof(struct node_settings));
+
+	cbt->settings->ring_strategy = switch_core_strdup(cbt->pool, argv[0]);
+	cbt->matches++;
+	return 1;
+}
+
+static void set_node_attributes(fifo_node_t *node, switch_mutex_t *mutex)
+{
+	node_callback_t cbt = { 0 };
+	char *sql = NULL;
+
+	cbt.pool = node->pool;
+
+	sql = switch_mprintf("select ring_strategy from queues where fifo_name = '%q'", node->name);
+	fifo_execute_sql_callback(mutex, sql, sql2node_callback, &cbt);
+
+	if (cbt.matches != 1) {
+		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "Expected query to return exactly one row, but returned [%d] for node [%s].\n", cbt.matches, node->name);
+		return;
+	}
+
+	if (!strcmp(cbt.settings->ring_strategy, "RING_ALL")) {
+		node->outbound_per_cycle = 0;
+		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "Setting outbound_per_cycle to [0] for ring_strategy [RING_ALL] on node [%s].\n", node->name);
+	}
+
+}
+
+#endif /* FIFO_PERMENANT_RECORDS */
+
+
 static fifo_node_t *create_node(const char *name, uint32_t importance, switch_mutex_t *mutex)
 {
 	fifo_node_t *node;
@@ -1022,6 +1086,7 @@ static fifo_node_t *create_node(const char *name, uint32_t importance, switch_mu
 	node = switch_core_alloc(pool, sizeof(*node));
 	node->pool = pool;
 	node->outbound_strategy = globals.default_strategy;
+	node->outbound_per_cycle = globals.default_outbound_per_cycle;
 	node->name = switch_core_strdup(node->pool, name);
 
 	if (!strchr(name, '@')) {
@@ -1046,6 +1111,10 @@ static fifo_node_t *create_node(const char *name, uint32_t importance, switch_mu
 	switch_safe_free(sql);
 
 	node->importance = importance;
+
+	#ifdef FIFO_PERMENANT_RECORDS
+	set_node_attributes(node, mutex);
+	#endif /* FIFO_PERMENANT_RECORDS */
 
 	switch_mutex_lock(globals.mutex);
 
@@ -2530,7 +2599,14 @@ SWITCH_STANDARD_APP(fifo_track_call_function)
 static void fifo_caller_add(fifo_node_t *node, switch_core_session_t *session)
 {
 	char *sql;
+	time_t now = switch_epoch_time_now(NULL);
+
+	#ifdef FIFO_PERMENANT_RECORDS
+	char *permanent_sql;
+	#endif /* FIFO_PERMENANT_RECORDS */
+
 	switch_channel_t *channel = switch_core_session_get_channel(session);
+	switch_channel_set_variable_printf(channel, "fifo_epoch_push", "%ld", now);
 
 	sql = switch_mprintf("insert into fifo_callers (fifo_name,uuid,caller_caller_id_name,caller_caller_id_number,timestamp) "
 						 "values ('%q','%q','%q','%q',%ld)",
@@ -2538,9 +2614,23 @@ static void fifo_caller_add(fifo_node_t *node, switch_core_session_t *session)
 						 switch_core_session_get_uuid(session),
 						 switch_str_nil(switch_channel_get_variable(channel, "caller_id_name")),
 						 switch_str_nil(switch_channel_get_variable(channel, "caller_id_number")),
-						 switch_epoch_time_now(NULL));
+						 now);
 
 	fifo_execute_sql_queued(&sql, SWITCH_TRUE, SWITCH_TRUE);
+
+	#ifdef FIFO_PERMENANT_RECORDS
+	permanent_sql = switch_mprintf("insert into fifo_permanent_callers (fifo_name, caller_uuid, caller_caller_id_name, caller_caller_id_number, fifo_enter_time) "
+						 "values ('%q','%q','%q','%q',%ld)",
+						 node->name,
+						 switch_core_session_get_uuid(session),
+						 switch_str_nil(switch_channel_get_variable(channel, "caller_id_name")),
+						 switch_str_nil(switch_channel_get_variable(channel, "caller_id_number")),
+						 now);
+
+	switch_assert(permanent_sql);
+	fifo_execute_permanent_sql(&permanent_sql, NULL, SWITCH_TRUE);
+	#endif /* FIFO_PERMENANT_RECORDS */
+
 }
 
 static void fifo_caller_del(const char *uuid)
@@ -2585,6 +2675,12 @@ SWITCH_STANDARD_APP(fifo_function)
 	const char *arg_fifo_name = NULL;
 	const char *arg_inout = NULL;
 	const char *serviced_uuid = NULL;
+	int aborted = 0;
+
+	#ifdef FIFO_PERMENANT_RECORDS
+	long push_time;
+	char *permanent_sql;
+	#endif /*FIFO_PERMENANT_RECORDS */
 
 	if (!globals.running) {
 		return;
@@ -2690,7 +2786,6 @@ SWITCH_STANDARD_APP(fifo_function)
 		const char *pri;
 		char tmp[25] = "";
 		int p = 0;
-		int aborted = 0;
 		fifo_chime_data_t cd = { {0} };
 		const char *chime_list = switch_channel_get_variable(channel, "fifo_chime_list");
 		const char *chime_freq = switch_channel_get_variable(channel, "fifo_chime_freq");
@@ -2919,6 +3014,8 @@ SWITCH_STANDARD_APP(fifo_function)
 		const char *outbound_id = switch_channel_get_variable(channel, "fifo_outbound_uuid");
 		switch_event_t *event;
 		const char *cid_name = NULL, *cid_number = NULL;
+
+		long now;
 
 		//const char *track_use_count = switch_channel_get_variable(channel, "fifo_track_use_count");
 		//int do_track = switch_true(track_use_count);
@@ -3235,10 +3332,14 @@ SWITCH_STANDARD_APP(fifo_function)
 				switch_channel_t *other_channel = switch_core_session_get_channel(other_session);
 				switch_caller_profile_t *originator_cp, *originatee_cp;
 				const char *o_announce = NULL;
-				const char *record_template = switch_channel_get_variable(channel, "fifo_record_template");
+				const char *record_template = NULL;
 				char *expanded = NULL;
 				char *sql = NULL;
 				long epoch_start, epoch_end;
+
+				if (!(record_template = switch_channel_get_variable(channel, "fifo_record_template"))) {
+					record_template = switch_channel_get_variable(other_channel, "fifo_record_template");
+				}
 
 				if (switch_event_create_subclass(&event, SWITCH_EVENT_CUSTOM, FIFO_EVENT) == SWITCH_STATUS_SUCCESS) {
 					switch_channel_event_set_data(channel, event);
@@ -3408,20 +3509,37 @@ SWITCH_STANDARD_APP(fifo_function)
 
 				add_bridge_call(switch_core_session_get_uuid(other_session));
 				add_bridge_call(switch_core_session_get_uuid(session));
+				now = (long) switch_epoch_time_now(NULL);
 
 				sql = switch_mprintf("insert into fifo_bridge "
 									 "(fifo_name,caller_uuid,caller_caller_id_name,caller_caller_id_number,consumer_uuid,consumer_outgoing_uuid,bridge_start) "
 									 "values ('%q','%q','%q','%q','%q','%q',%ld)",
 									 node->name,
-									 switch_core_session_get_uuid(other_session),
+									 caller_uuid,
 									 switch_str_nil(switch_channel_get_variable(other_channel, "caller_id_name")),
 									 switch_str_nil(switch_channel_get_variable(other_channel, "caller_id_number")),
-									 switch_core_session_get_uuid(session),
+									 my_id,
 									 switch_str_nil(outbound_id),
-									 (long) switch_epoch_time_now(NULL)
+									 now
 									 );
 
 				fifo_execute_sql_queued(&sql, SWITCH_TRUE, SWITCH_FALSE);
+
+				#ifdef FIFO_PERMENANT_RECORDS
+				if ((push_time = atol(switch_channel_get_variable(other_channel, "fifo_epoch_push")))) {
+					permanent_sql = switch_mprintf("update fifo_permanent_callers set fifo_bridge_time = %ld, "
+												   "agent_id = %Q, agent_channel_uuid = '%q' "
+												   "where caller_uuid = '%q' and fifo_enter_time = %ld and fifo_name = '%q';",
+												   now,
+												   outbound_id,
+												   my_id,
+												   caller_uuid,
+												   push_time,
+												   node->name
+												   );
+					fifo_execute_permanent_sql(&permanent_sql, NULL, SWITCH_TRUE);
+				}
+				#endif /* FIFO_PERMENANT_RECORDS */
 
 				switch_channel_set_variable(channel, SWITCH_SIGNAL_BOND_VARIABLE, switch_core_session_get_uuid(other_session));
 				switch_channel_set_variable(other_channel, SWITCH_SIGNAL_BOND_VARIABLE, switch_core_session_get_uuid(session));
@@ -3442,6 +3560,19 @@ SWITCH_STANDARD_APP(fifo_function)
 					switch_channel_set_variable(switch_core_session_get_channel(other_session), "fifo_initiated_bridge", NULL);
 					switch_channel_set_variable(switch_core_session_get_channel(other_session), "fifo_bridge_role", NULL);
 				}
+
+				#ifdef FIFO_PERMENANT_RECORDS
+				if ((push_time = atol(switch_channel_get_variable(other_channel, "fifo_epoch_push")))) {
+					permanent_sql = switch_mprintf("update fifo_permanent_callers set fifo_exit_time = %ld "
+												   "where caller_uuid = '%q' and fifo_enter_time = %ld and fifo_name = '%q';",
+												   (long)switch_epoch_time_now(NULL),
+												   caller_uuid,
+												   push_time,
+												   node->name
+												   );
+					fifo_execute_permanent_sql(&permanent_sql, NULL, SWITCH_TRUE);
+				}
+				#endif /* FIFO_PERMENANT_RECORDS */
 
 				if (outbound_id) {
 					long now = (long) switch_epoch_time_now(NULL);
@@ -3654,8 +3785,27 @@ SWITCH_STANDARD_APP(fifo_function)
 
   done:
 
-	if (!consumer && in_table) {
-		fifo_caller_del(switch_core_session_get_uuid(session));
+	if (!consumer) {
+		char * uuid = switch_core_session_get_uuid(session);
+
+		#ifdef FIFO_PERMENANT_RECORDS
+		if (aborted) {
+			if ((push_time = atol(switch_channel_get_variable(channel, "fifo_epoch_push")))) {
+				permanent_sql = switch_mprintf("update fifo_permanent_callers set fifo_exit_time = %ld "
+											   "where caller_uuid = '%q' and fifo_enter_time = %ld and fifo_name = '%q';",
+											   (long)switch_epoch_time_now(NULL),
+											   uuid,
+											   push_time,
+											   node->name
+											   );
+				fifo_execute_permanent_sql(&permanent_sql, NULL, SWITCH_TRUE);
+			}
+		}
+		#endif /* FIFO_PERMENANT_RECORDS */
+
+		if (in_table) {
+			fifo_caller_del(uuid);
+		}
 	}
 
 	if (switch_true(switch_channel_get_variable(channel, "fifo_destroy_after_use"))) {
@@ -4409,6 +4559,11 @@ static switch_status_t read_config_file(switch_xml_t *xml, switch_xml_t *cfg) {
 					switch_set_string(globals.odbc_dsn, val);
 				} else {
 					switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "ODBC IS NOT AVAILABLE!\n");
+				}
+			} else if (!strcasecmp(var, "default_outbound_per_cycle")) {
+				int tmp;
+				if ((tmp = atoi(val)) > -1) {
+					globals.default_outbound_per_cycle = tmp;
 				}
 			} else if (!strcasecmp(var, "dbname") && !zstr(val)) {
 				globals.dbname = switch_core_strdup(globals.pool, val);
