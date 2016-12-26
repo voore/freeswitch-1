@@ -2227,7 +2227,6 @@ static void *SWITCH_THREAD_FUNC node_thread_run(switch_thread_t *thread, void *o
 				switch_mutex_unlock(this_node->update_mutex);
 				switch_thread_rwlock_unlock(this_node->rwlock);
 				switch_core_destroy_memory_pool(&this_node->pool);
-				switch_core_hash_delete(globals.fifo_hash, this_node->name);
 				continue;
 			}
 
@@ -2406,6 +2405,7 @@ static uint32_t fifo_add_outbound(const char *node_name, const char *url, uint32
 
 	if (!(node = switch_core_hash_find(globals.fifo_hash, node_name))) {
 		node = create_node(node_name, 0, globals.sql_mutex);
+		node->ready = 1;
 	}
 
 	switch_thread_rwlock_rdlock(node->rwlock);
