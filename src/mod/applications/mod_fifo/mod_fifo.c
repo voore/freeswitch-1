@@ -88,7 +88,7 @@ SWITCH_MODULE_DEFINITION(mod_fifo, mod_fifo_load, mod_fifo_shutdown, NULL);
  * who will be available to answer a single caller. In ringall this
  * maximum is the number who will be called, in enterprise the need defines
  * how many agents will be called. outbound_per_cycle_min will define
- * the minimum agents who will be called to answer a caller regardless of 
+ * the minimum agents who will be called to answer a caller regardless of
  * need, giving the enterprise strategy the ability to ring through more
  * than one agent for one caller.
 
@@ -4253,7 +4253,7 @@ static void list_node(fifo_node_t *node, switch_xml_t x_report, int *off, int ve
 	switch_xml_set_attr_d(x_fifo, "outbound_per_cycle", tmp);
 
 	switch_snprintf(tmp, sizeof(buffer), "%u", node->outbound_per_cycle_min);
-	switch_xml_set_attr_d(x_fifo, "outbound_per_cycle_min", tmp); 
+	switch_xml_set_attr_d(x_fifo, "outbound_per_cycle_min", tmp);
 
 	switch_snprintf(tmp, sizeof(buffer), "%u", node->ring_timeout);
 	switch_xml_set_attr_d(x_fifo, "ring_timeout", tmp);
