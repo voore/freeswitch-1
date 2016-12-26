@@ -4562,7 +4562,7 @@ static switch_status_t read_config_file(switch_xml_t *xml, switch_xml_t *cfg) {
 				} else {
 					switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "ODBC IS NOT AVAILABLE!\n");
 				}
-			} else if (!strcasecmp(var, "default_outbound_per_cycle")) {
+			} else if (!strcasecmp(var, "default-outbound-per-cycle")) {
 				int tmp;
 				if ((tmp = atoi(val)) > -1) {
 					globals.default_outbound_per_cycle = tmp;
@@ -4615,6 +4615,7 @@ static switch_status_t load_config(int reload, int del_all)
 	strncpy(globals.hostname, switch_core_get_switchname(), sizeof(globals.hostname) - 1);
 	globals.dbname = "fifo";
 	globals.default_strategy = NODE_STRATEGY_RINGALL;
+	globals.default_outbound_per_cycle = 1;
 	globals.delete_all_members_on_startup = SWITCH_FALSE;
 
 	if ((status = read_config_file(&xml, &cfg)) != SWITCH_STATUS_SUCCESS) return status;
