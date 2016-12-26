@@ -1078,9 +1078,9 @@ static fifo_node_t *create_node(const char *name, uint32_t importance, switch_mu
 	fifo_node_t *node;
 	int x = 0;
 	switch_memory_pool_t *pool;
-	char outbound_count[80] = "";
-	callback_t cbt = { 0 };
-	char *sql = NULL;
+	// char outbound_count[80] = "";
+	// callback_t cbt = { 0 };
+	// char *sql = NULL;
 	if (!globals.running) {
 		return NULL;
 	}
@@ -1106,13 +1106,14 @@ static fifo_node_t *create_node(const char *name, uint32_t importance, switch_mu
 	switch_thread_rwlock_create(&node->rwlock, node->pool);
 	switch_mutex_init(&node->mutex, SWITCH_MUTEX_NESTED, node->pool);
 	switch_mutex_init(&node->update_mutex, SWITCH_MUTEX_NESTED, node->pool);
-	cbt.buf = outbound_count;
-	cbt.len = sizeof(outbound_count);
-	sql = switch_mprintf("select count(*) from fifo_outbound where fifo_name = '%q'", name);
-	fifo_execute_sql_callback(mutex, sql, sql2str_callback, &cbt);
-	node->member_count = atoi(outbound_count);
-	node->has_outbound = (node->member_count > 0) ? 1 : 0;
-	switch_safe_free(sql);
+	// cbt.buf = outbound_count;
+	// cbt.len = sizeof(outbound_count);
+	// sql = switch_mprintf("select count(*) from fifo_outbound where fifo_name = '%q'", name);
+	// fifo_execute_sql_callback(mutex, sql, sql2str_callback, &cbt);
+	// node->member_count = atoi(outbound_count);
+	// node->has_outbound = (node->member_count > 0) ? 1 : 0;
+	// switch_safe_free(sql);
+	node->has_outbound = 1;
 
 	node->importance = importance;
 
