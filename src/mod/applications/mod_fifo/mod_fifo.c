@@ -2201,6 +2201,19 @@ static void *SWITCH_THREAD_FUNC node_thread_run(switch_thread_t *thread, void *o
 
 		switch_mutex_lock(globals.mutex);
 
+		if (globals.running == 2) {
+			switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_NOTICE, "Trying to load config.\n");
+			if (load_config(0, 1) == SWITCH_STATUS_SUCCESS) {
+				globals.running = 1;
+			} else {
+				switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "Failed to load mod_fifo config (will try again..)\n");
+				switch_mutex_unlock(globals.mutex);
+				switch_yield(1000000);
+				continue;
+			}
+		}
+
+
 		if (globals.debug > 3) switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_DEBUG, "Trying priority: %d\n", cur_priority);
 
 		last = NULL;
@@ -5035,7 +5048,6 @@ SWITCH_MODULE_LOAD_FUNCTION(mod_fifo_load)
 {
 	switch_application_interface_t *app_interface;
 	switch_api_interface_t *commands_api_interface;
-	switch_status_t status;
 
 	/* create/register custom event message type */
 	if (switch_event_reserve_subclass(FIFO_EVENT) != SWITCH_STATUS_SUCCESS) {
@@ -5067,11 +5079,9 @@ SWITCH_MODULE_LOAD_FUNCTION(mod_fifo_load)
 
 	globals.running = 1;
 
-	if ((status = load_config(0, 1)) != SWITCH_STATUS_SUCCESS) {
-		switch_event_unbind(&globals.node);
-		switch_event_free_subclass(FIFO_EVENT);
-		switch_core_hash_destroy(&globals.fifo_hash);
-		return status;
+	if (load_config(0, 1) != SWITCH_STATUS_SUCCESS) {
+		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "Failed to load mod_fifo config (will try again..)\n");
+		globals.running = 2;
 	}
 
 	/* connect my internal structure to the blank pointer passed to me */
