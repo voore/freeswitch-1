@@ -372,6 +372,24 @@ static switch_status_t fifo_queue_popfly(fifo_queue_t *queue, const char *uuid)
 	return SWITCH_STATUS_SUCCESS;
 }
 
+
+#ifdef FIFO_PERMENANT_RECORDS
+// Additional attributes regarding a fifo node
+struct node_settings {
+	char *ring_strategy;
+	int auto_logout_x_attempts;
+};
+
+struct node_callback {
+	switch_memory_pool_t *pool;
+	struct node_settings *settings;
+	int matches;
+};
+typedef struct node_callback node_callback_t;
+
+#endif /* FIFO_PERMENANT_RECORDS */
+
+
 /*!\struct fifo_node
  *
  * \var fifo_node::outbound_name
@@ -412,6 +430,9 @@ struct fifo_node {
 	char *domain_name;
 	int retry_delay;
 	struct fifo_node *next;
+#ifdef FIFO_PERMENANT_RECORDS
+	struct node_settings *settings;
+#endif /* FIFO_PERMENANT_RECORDS */
 };
 
 typedef struct fifo_node fifo_node_t;
@@ -1025,18 +1046,6 @@ switch_status_t fifo_execute_permanent_sql(char **sql, switch_mutex_t *mutex, in
 }
 
 
-struct node_settings {
-	char *ring_strategy;
-};
-
-struct node_callback {
-	switch_memory_pool_t *pool;
-	struct node_settings *settings;
-	int matches;
-};
-typedef struct node_callback node_callback_t;
-
-
 static int sql2node_callback(void *pArg, int argc, char **argv, char **columnNames)
 {
 	node_callback_t *cbt = (node_callback_t *) pArg;
@@ -1062,6 +1071,8 @@ static void set_node_attributes(fifo_node_t *node, switch_mutex_t *mutex)
 		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "Expected query to return exactly one row, but returned [%d] for node [%s].\n", cbt.matches, node->name);
 		return;
 	}
+
+	node->settings = cbt.settings;
 
 	if (!strcmp(cbt.settings->ring_strategy, "RING_ALL")) {
 		node->outbound_per_cycle = 0;
