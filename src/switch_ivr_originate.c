@@ -3071,7 +3071,7 @@ SWITCH_DECLARE(switch_status_t) switch_ivr_originate(switch_core_session_t *sess
 				if ((to = (uint8_t) (elapsed >= (time_t) timelimit_sec)) || (fail_on_single_reject && oglobals.hups)) {
 					int ok = 0;
 
-					if (fail_on_single_reject_var) {
+					if (!to && fail_on_single_reject_var) {
 						if (!switch_true(fail_on_single_reject_var)) {
 							ok = 1;
 
