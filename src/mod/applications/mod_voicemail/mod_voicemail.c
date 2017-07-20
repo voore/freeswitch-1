@@ -2503,6 +2503,41 @@ static void voicemail_check_main(switch_core_session_t *session, vm_profile_t *p
 							ok = 0;
 						}
 						myid = switch_core_session_strdup(session, switch_xml_attr(x_user, "id"));
+
+						if (!export_vars) {
+							export_vars = profile->check_export_vars;
+						}
+
+						if (export_vars) {
+							export_vars_count = switch_separate_string(export_vars, ',', export_vars_arr, (sizeof(export_vars_arr) / sizeof(export_vars_arr[0])));
+
+							if (export_vars_count >= (sizeof(export_vars_arr) / sizeof(export_vars_arr[0]))) {
+								switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_WARNING, "Cannot export all variables. Buffer overflow!\n");
+							}
+						}
+
+						x_params = switch_xml_child(x_user, "variables");
+						for (x_param = switch_xml_child(x_params, "variable"); x_param; x_param = x_param->next) {
+							const char *var = switch_xml_attr_soft(x_param, "name");
+							const char *val = switch_xml_attr_soft(x_param, "value");
+
+							if (!strcasecmp(var, "timezone")) {
+								switch_channel_set_variable(channel, var, val);
+							}
+
+							else if (export_vars_count) {
+								int i;
+
+								for (i = 0; i < export_vars_count; i++) {
+									if(!strcasecmp(var, export_vars_arr[i])) {
+										switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_DEBUG, "Exporting variable [%s=%s]\n", var, val);
+										switch_channel_set_variable(channel, var, val);
+										break;
+									}
+								}
+							}
+						}
+
 					}
 
 					switch_event_destroy(&params);
@@ -2515,40 +2550,6 @@ static void voicemail_check_main(switch_core_session_t *session, vm_profile_t *p
 				thepass = thehash = NULL;
 				switch_snprintfv(sql, sizeof(sql), "select * from voicemail_prefs where username='%q' and domain='%q'", myid, domain_name);
 				vm_execute_sql_callback(profile, profile->mutex, sql, prefs_callback, &cbt);
-
-				if (!export_vars) {
-					export_vars = profile->check_export_vars;
-				}
-
-				if (export_vars) {
-					export_vars_count = switch_separate_string(export_vars, ',', export_vars_arr, (sizeof(export_vars_arr) / sizeof(export_vars_arr[0])));
-				
-					if (export_vars_count >= (sizeof(export_vars_arr) / sizeof(export_vars_arr[0]))) {
-						switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_WARNING, "Cannot export all variables. Buffer overflow!\n");
-					}
-				}
-
-				x_params = switch_xml_child(x_user, "variables");
-				for (x_param = switch_xml_child(x_params, "variable"); x_param; x_param = x_param->next) {
-					const char *var = switch_xml_attr_soft(x_param, "name");
-					const char *val = switch_xml_attr_soft(x_param, "value");
-
-					if (!strcasecmp(var, "timezone")) {
-						switch_channel_set_variable(channel, var, val);
-					}
-
-					else if (export_vars_count) {
-						int i;
-
-						for (i = 0; i < export_vars_count; i++) {
-							if(!strcasecmp(var, export_vars_arr[i])) {
-								switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_WARNING, "Exporting variable [%s=%s]\n", var, val);
-								switch_channel_set_variable(channel, var, val);
-								break;
-							}
-						}
-					}
-				}
 
 				x_params = switch_xml_child(x_user, "params");
 				for (x_param = switch_xml_child(x_params, "param"); x_param; x_param = x_param->next) {
