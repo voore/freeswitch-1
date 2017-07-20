@@ -182,6 +182,7 @@ struct vm_profile {
 	switch_bool_t db_password_override;
 	switch_bool_t allow_empty_password_auth;
 	switch_bool_t keep_local_after_forward;
+	char *check_export_vars;
 	switch_thread_rwlock_t *rwlock;
 	switch_memory_pool_t *pool;
 	uint32_t flags;
@@ -692,6 +693,8 @@ vm_profile_t *profile_set_config(vm_profile_t *profile)
 	SWITCH_CONFIG_SET_ITEM(profile->config[i++], "allow-empty-password-auth", SWITCH_CONFIG_BOOL, CONFIG_RELOADABLE,
 						   &profile->allow_empty_password_auth, SWITCH_TRUE, NULL, NULL, NULL);
 	SWITCH_CONFIG_SET_ITEM(profile->config[i++], "auto-playback-recordings", SWITCH_CONFIG_BOOL, CONFIG_RELOADABLE, &profile->auto_playback_recordings, SWITCH_FALSE, NULL, NULL, NULL); 
+
+	SWITCH_CONFIG_SET_ITEM(profile->config[i++], "vm-check-export-vars", SWITCH_CONFIG_STRING, CONFIG_RELOADABLE, &profile->check_export_vars, NULL, &profile->config_str_pool, NULL, NULL);
 
 	switch_assert(i < VM_PROFILE_CONFIGITEM_COUNT);
 
@@ -2434,6 +2437,9 @@ static void voicemail_check_main(switch_core_session_t *session, vm_profile_t *p
 				prefs_callback_t cbt = { {0}
 				};
 				char sql[512] = "";
+				char *export_vars = NULL;
+				char *export_vars_arr[2048];
+				int export_vars_count = 0;
 
 				if (!attempts) {
 					failed = 1;
@@ -2483,6 +2489,10 @@ static void voicemail_check_main(switch_core_session_t *session, vm_profile_t *p
 								continue; /* Ignore empty entires */
 							}
 
+							if (!strcasecmp(var, "vm-check-export-vars")) {
+								export_vars = switch_core_session_strdup(session, val);
+							}
+
 							if (!strcasecmp(var, "vm-enabled")) {
 								vm_enabled = !switch_false(val);
 							}
@@ -2506,6 +2516,18 @@ static void voicemail_check_main(switch_core_session_t *session, vm_profile_t *p
 				switch_snprintfv(sql, sizeof(sql), "select * from voicemail_prefs where username='%q' and domain='%q'", myid, domain_name);
 				vm_execute_sql_callback(profile, profile->mutex, sql, prefs_callback, &cbt);
 
+				if (!export_vars) {
+					export_vars = profile->check_export_vars;
+				}
+
+				if (export_vars) {
+					export_vars_count = switch_separate_string(export_vars, ',', export_vars_arr, (sizeof(export_vars_arr) / sizeof(export_vars_arr[0])));
+				
+					if (export_vars_count >= (sizeof(export_vars_arr) / sizeof(export_vars_arr[0]))) {
+						switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_WARNING, "Cannot export all variables. Buffer overflow!\n");
+					}
+				}
+
 				x_params = switch_xml_child(x_user, "variables");
 				for (x_param = switch_xml_child(x_params, "variable"); x_param; x_param = x_param->next) {
 					const char *var = switch_xml_attr_soft(x_param, "name");
@@ -2513,6 +2535,18 @@ static void voicemail_check_main(switch_core_session_t *session, vm_profile_t *p
 
 					if (!strcasecmp(var, "timezone")) {
 						switch_channel_set_variable(channel, var, val);
+					}
+
+					else if (export_vars_count) {
+						int i;
+
+						for (i = 0; i < export_vars_count; i++) {
+							if(!strcasecmp(var, export_vars_arr[i])) {
+								switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_WARNING, "Exporting variable [%s=%s]\n", var, val);
+								switch_channel_set_variable(channel, var, val);
+								break;
+							}
+						}
 					}
 				}
 
