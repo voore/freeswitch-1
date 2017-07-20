@@ -2505,7 +2505,7 @@ static void voicemail_check_main(switch_core_session_t *session, vm_profile_t *p
 						myid = switch_core_session_strdup(session, switch_xml_attr(x_user, "id"));
 
 						if (!export_vars) {
-							export_vars = profile->check_export_vars;
+							export_vars = switch_core_session_strdup(session, profile->check_export_vars);
 						}
 
 						if (export_vars) {
