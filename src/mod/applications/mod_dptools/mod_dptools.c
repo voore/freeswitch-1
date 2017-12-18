@@ -3978,6 +3978,7 @@ static switch_call_cause_t user_outgoing_channel(switch_core_session_t *session,
 	switch_channel_t *new_channel = NULL;
 	switch_event_t *params = NULL, *var_event_orig = var_event;
 	char stupid[128] = "";
+	const char *p = NULL;
 	const char *skip = NULL, *var = NULL;
 
 	if (zstr(outbound_profile->destination_number)) {
@@ -4111,7 +4112,7 @@ static switch_call_cause_t user_outgoing_channel(switch_core_session_t *session,
 
 
 		switch_snprintf(stupid, sizeof(stupid), "user/%s", dialed_user);
-		if (switch_stristr(stupid, d_dest)) {
+		if ((p = switch_stristr(stupid, d_dest)) && !isalnum(*(p + strlen(stupid))) ) {
 			switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_WARNING, "Waddya Daft? You almost called '%s' in an infinate loop!\n",
 							  stupid);
 			cause = SWITCH_CAUSE_INVALID_IE_CONTENTS;
