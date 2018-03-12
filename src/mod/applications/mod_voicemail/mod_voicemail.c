@@ -899,13 +899,19 @@ static switch_status_t cancel_on_dtmf(switch_core_session_t *session, void *inpu
 	return SWITCH_STATUS_SUCCESS;
 }
 
+typedef enum {
+        VM_PLAYBACK_CONTROLS_INACTIVE,
+        VM_PLAYBACK_CONTROLS_LISTEN, // Additional controls for the mailbox owner
+        VM_PLAYBACK_CONTROLS_ACTIVE,
+} vm_playback_controls_t;
+
 
 struct call_control {
 	vm_profile_t *profile;
 	switch_file_handle_t *fh;
 	char buf[4];
 	int noexit;
-	int playback_controls_active;
+	vm_playback_controls_t playback_controls_active;
 };
 typedef struct call_control switch_cc_t;
 
@@ -929,10 +935,15 @@ static switch_status_t control_playback(switch_core_session_t *session, void *in
 				return SWITCH_STATUS_BREAK;
 			}
 
-			if (!cc->playback_controls_active
+			if (cc->playback_controls_active == VM_PLAYBACK_CONTROLS_ACTIVE
 				&& (dtmf->digit == *cc->profile->email_key)) {
 				*cc->buf = dtmf->digit;
 				return SWITCH_STATUS_BREAK;
+			}
+
+			if (cc->playback_controls_active >= VM_PLAYBACK_CONTROLS_LISTEN
+				&& (dtmf->digit == *cc->profile->main_menu_key)) {
+				return SWITCH_STATUS_FALSE;
 			}
 
 			if (!(fh && fh->file_interface && switch_test_flag(fh, SWITCH_FILE_OPEN))) {
@@ -1599,6 +1610,12 @@ static switch_status_t listen_file(switch_core_session_t *session, vm_profile_t 
 	char cid_buf[1024] = "";
 
 	if (switch_channel_ready(channel)) {
+		memset(&cc, 0, sizeof(cc));
+		cc.profile = profile;
+		args.buf = &cc;
+		args.input_callback = control_playback;
+		cc.playback_controls_active = VM_PLAYBACK_CONTROLS_LISTEN;
+
 		switch_snprintf(cid_buf, sizeof(cid_buf), "%s|%s", cbt->cid_name, cbt->cid_number);
 
 		msg.from = __FILE__;
@@ -1610,10 +1627,8 @@ static switch_status_t listen_file(switch_core_session_t *session, vm_profile_t 
 		switch_core_session_receive_message(session, &msg);
 		
 		if (!zstr(cbt->cid_number) && (switch_true(switch_channel_get_variable(channel, "vm_announce_cid")))) {
-			TRY_CODE(switch_ivr_phrase_macro(session, VM_SAY_PHONE_NUMBER_MACRO, cbt->cid_number, NULL, NULL));
+			TRY_CODE(switch_ivr_phrase_macro(session, VM_SAY_PHONE_NUMBER_MACRO, cbt->cid_number, NULL, &args));
 		}
-		
-		args.input_callback = cancel_on_dtmf;
 		
 		switch_snprintf(key_buf, sizeof(key_buf), "%s:%s:%s:%s:%s:%s%s%s", profile->repeat_msg_key, profile->save_file_key,
 						profile->delete_file_key, profile->email_key, profile->callback_key,
@@ -1621,10 +1636,6 @@ static switch_status_t listen_file(switch_core_session_t *session, vm_profile_t 
 
 
 		switch_snprintf(input, sizeof(input), "%s:%d", cbt->type == MSG_NEW ? "new" : "saved", cbt->want + 1);
-		memset(&cc, 0, sizeof(cc));
-		cc.profile = profile;
-		args.buf = &cc;
-		args.input_callback = control_playback;
 		TRY_CODE(switch_ivr_phrase_macro(session, VM_SAY_MESSAGE_NUMBER_MACRO, input, NULL, &args));
 
 	  play_file:
@@ -1638,11 +1649,11 @@ static switch_status_t listen_file(switch_core_session_t *session, vm_profile_t 
 			*cc.buf = '\0';
 			memset(&fh, 0, sizeof(fh));
 			cc.fh = &fh;
-			cc.playback_controls_active = 1;
+			cc.playback_controls_active = VM_PLAYBACK_CONTROLS_ACTIVE;
 			if (switch_file_exists(cbt->file_path, switch_core_session_get_pool(session)) == SWITCH_STATUS_SUCCESS) {
 				TRY_CODE(switch_ivr_play_file(session, &fh, cbt->file_path, &args));
 			}
-			cc.playback_controls_active = 0;
+			cc.playback_controls_active = VM_PLAYBACK_CONTROLS_LISTEN;
 		}
 
 		if (!*cc.buf && (profile->play_date_announcement == VM_DATE_LAST)) {
