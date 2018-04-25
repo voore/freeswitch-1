@@ -1469,6 +1469,7 @@ SWITCH_DECLARE(switch_status_t) switch_ivr_enterprise_originate(switch_core_sess
 	switch_caller_profile_t *cp = NULL;
 	switch_channel_t *channel = NULL;
 	char *data;
+	switch_call_cause_t my_cancel_cause = SWITCH_CAUSE_LOSE_RACE;
 	switch_status_t status = SWITCH_STATUS_FALSE;
 	switch_threadattr_t *thd_attr = NULL;
 	int running = 0, over = 0;
@@ -1663,6 +1664,13 @@ SWITCH_DECLARE(switch_status_t) switch_ivr_enterprise_originate(switch_core_sess
 		switch_mutex_unlock(hp->mutex);
 		switch_thread_join(&tstatus, hp->thread);
 		switch_event_destroy(&hp->ovars);
+	} else {
+		if (channel && switch_channel_ready(channel)) {
+			my_cancel_cause = SWITCH_CAUSE_NO_ANSWER;
+		} else {
+			my_cancel_cause = SWITCH_CAUSE_ORIGINATOR_CANCEL;
+		}
+		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_DEBUG, "Setting cause to: [%s]!\n", switch_channel_cause2str(my_cancel_cause));
 	}
 
 	for (i = 0; i < x_argc; i++) {
@@ -1673,7 +1681,7 @@ SWITCH_DECLARE(switch_status_t) switch_ivr_enterprise_originate(switch_core_sess
 		if (cancel_cause && *cancel_cause > 0) {
 			handles[i].cancel_cause = *cancel_cause;
 		} else {
-			handles[i].cancel_cause = SWITCH_CAUSE_LOSE_RACE;
+			handles[i].cancel_cause = my_cancel_cause;
 		}
 	}
 
