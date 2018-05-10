@@ -1445,15 +1445,14 @@ uint8_t sofia_reg_handle_register_token(nua_t *nua, sofia_profile_t *profile, nu
 
 
 		if (sip->sip_path) {
-			if ((path_val = sip_header_as_string(nua_handle_home(nh), (void *) sip->sip_path))) {
-				char *path_stripped = sofia_glue_get_url_from_contact(path_val, SWITCH_TRUE);
-				su_free(nua_handle_home(nh), path_val);
-				path_val = path_stripped;
-				path_encoded_len = (int)(strlen(path_val) * 3) + 1;
-				switch_zmalloc(path_encoded, path_encoded_len);
-				switch_copy_string(path_encoded, ";fs_path=", 10);
-				switch_url_encode(path_val, path_encoded + 9, path_encoded_len - 9);
+			path_val = sofia_glue_join_route_headers(nh, sip->sip_path);
+			if (path_val) {
+				path_encoded = sofia_glue_encode_fs_path(path_val);
 			}
+			if (!path_encoded) {
+				switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "A Path header exists but we Could not get fs_path str.\n");
+			}
+
 		} else if (is_nat) {
 			char my_contact_str[1024];
 			if (uparams) {
@@ -2173,7 +2172,7 @@ uint8_t sofia_reg_handle_register_token(nua_t *nua, sofia_profile_t *profile, nu
 	switch_safe_free(display_m);
 	switch_safe_free(dup_mwi_account);
 	switch_safe_free(utmp);
-	switch_safe_free(path_val);
+	su_free(nua_handle_home(nh), path_val);
 	switch_safe_free(token_val);
 
 	if (auth_params) {

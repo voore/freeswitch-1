@@ -2835,6 +2835,40 @@ void sofia_glue_build_vid_refresh_message(switch_core_session_t *session, const 
 }
 
 
+char *sofia_glue_join_route_headers(nua_handle_t *nh, sip_route_t *rt)
+{
+	char *route = NULL;
+	char *route_val = NULL;
+	su_strlst_t *route_list = su_strlst_create(nua_handle_home(nh));
+
+	for (sip_route_t *rr = rt; rr; rr = rr->r_next) {
+		route = sip_header_as_string(su_strlst_home(route_list), (void *) rr);
+		if (route) {
+			su_strlst_append(route_list, route);
+		}
+	}
+
+	if (su_strlst_len(route_list)) {
+		route_val = su_strlst_join(route_list, nua_handle_home(nh), ",");
+	}
+	su_strlst_destroy(route_list);
+	return route_val;
+}
+
+
+char *sofia_glue_encode_fs_path(const char *route_val)
+{
+	char *encoded = NULL;
+	int encoded_len = 0;
+
+	encoded_len = (int)(strlen(route_val) * 3) + 10;
+	switch_zmalloc(encoded, encoded_len);
+	switch_copy_string(encoded, ";fs_path=", 10);
+	switch_url_encode(route_val, encoded + 9, encoded_len - 9);
+	return encoded;
+}
+
+
 char *sofia_glue_gen_contact_str(sofia_profile_t *profile, sip_t const *sip, nua_handle_t *nh, sofia_dispatch_event_t *de, sofia_nat_parse_t *np)
 {
 	char *contact_str = NULL;
@@ -2929,18 +2963,20 @@ char *sofia_glue_gen_contact_str(sofia_profile_t *profile, sip_t const *sip, nua
 	}
 
 	if (sip->sip_record_route) {
+		char *fs_path_str = NULL;
+		char *route_val = sofia_glue_join_route_headers(nh, sip->sip_record_route);
 		char *full_contact = sip_header_as_string(nh->nh_home, (void *) contact);
-		char *route = sofia_glue_strip_uri(sip_header_as_string(nh->nh_home, (void *) sip->sip_record_route));
-		char *full_contact_dup;
-		char *route_encoded;
-		int route_encoded_len;
-		full_contact_dup = sofia_glue_get_url_from_contact(full_contact, 1);
-		route_encoded_len = (int)(strlen(route) * 3) + 1;
-		switch_zmalloc(route_encoded, route_encoded_len);
-		switch_url_encode(route, route_encoded, route_encoded_len);
-		contact_str = switch_mprintf("%s <%s;fs_path=%s>", display, full_contact_dup, route_encoded);
-		free(full_contact_dup);
-		free(route_encoded);
+		char *full_contact_dup = sofia_glue_get_url_from_contact(full_contact, 1);
+		if (route_val && full_contact_dup) {
+			fs_path_str = sofia_glue_encode_fs_path(route_val);
+			contact_str = switch_mprintf("%s <%s%s>", display, full_contact_dup, fs_path_str);
+			switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_DEBUG, "contact_str = [%s]\n", contact_str);
+		} else {
+			switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_CRIT, "Could not get fs_path str.\n");
+		}
+		su_free(nua_handle_home(nh), route_val);
+		switch_safe_free(fs_path_str);
+		switch_safe_free(full_contact_dup);
 	}
 	else if (np->is_nat && np->fs_path) {
 		char *full_contact = sip_header_as_string(nh->nh_home, (void *) contact);
