@@ -506,6 +506,8 @@ char *sofia_overcome_sip_uri_weakness(switch_core_session_t *session, const char
 	char *new_uri = NULL;
 	char *p;
 	const char *url_params = NULL;
+	const char *transport_str = "";
+	const char *transport_param = "";
 
 	if (!zstr(params) && *params == '~') {
 		url_params = params + 1;
@@ -519,40 +521,15 @@ char *sofia_overcome_sip_uri_weakness(switch_core_session_t *session, const char
 		*p = '\0';
 	}
 
-	if (transport && transport != SOFIA_TRANSPORT_UDP) {
+	if ( transport && transport != SOFIA_TRANSPORT_UDP && !switch_stristr("port=", stripped) ) {
+		transport_str = sofia_glue_transport2str(transport);
+		transport_param = ";transport=";
+	}
 
-		if (switch_stristr("port=", stripped)) {
-			new_uri = switch_core_session_sprintf(session, "%s%s%s", uri_only ? "" : "<", stripped, uri_only ? "" : ">");
-		} else {
-
-			if (strchr(stripped, ';')) {
-				if (params) {
-					new_uri = switch_core_session_sprintf(session, "%s%s;transport=%s;%s%s",
-														  uri_only ? "" : "<", stripped, sofia_glue_transport2str(transport), params, uri_only ? "" : ">");
-				} else {
-					new_uri = switch_core_session_sprintf(session, "%s%s;transport=%s%s",
-														  uri_only ? "" : "<", stripped, sofia_glue_transport2str(transport), uri_only ? "" : ">");
-				}
-			} else {
-				if (params) {
-					new_uri = switch_core_session_sprintf(session, "%s%s;transport=%s;%s%s",
-														  uri_only ? "" : "<", stripped, sofia_glue_transport2str(transport), params, uri_only ? "" : ">");
-				} else {
-					new_uri = switch_core_session_sprintf(session, "%s%s;transport=%s%s",
-														  uri_only ? "" : "<", stripped, sofia_glue_transport2str(transport), uri_only ? "" : ">");
-				}
-			}
-		}
+	if (params) {
+		new_uri = switch_core_session_sprintf(session, "%s%s%s%s%s;%s%s", uri_only ? "" : "<", stripped, transport_param, transport_str, params, uri_only ? "" : ">");
 	} else {
-		if (params) {
-			new_uri = switch_core_session_sprintf(session, "%s%s;%s%s", uri_only ? "" : "<", stripped, params, uri_only ? "" : ">");
-		} else {
-			if (uri_only) {
-				new_uri = stripped;
-			} else {
-				new_uri = switch_core_session_sprintf(session, "<%s>", stripped);
-			}
-		}
+		new_uri = switch_core_session_sprintf(session, "%s%s%s%s%s", uri_only ? "" : "<", stripped, transport_param, transport_str, uri_only ? "" : ">");
 	}
 
 	if (url_params && !uri_only) {
