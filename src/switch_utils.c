@@ -2921,7 +2921,10 @@ SWITCH_DECLARE(int) switch_socket_waitfor(switch_pollfd_t *poll, int ms)
 	return nsds;
 }
 
-SWITCH_DECLARE(char *) switch_url_encode_opt(const char *url, char *buf, size_t len, switch_bool_t double_encode)
+/**
+ * Returns buf len
+ */
+SWITCH_DECLARE(size_t) switch_url_encode_opt_chars(const char *url, char *buf, size_t len, switch_bool_t double_encode, const char * const url_unsafe)
 {
 	const char *p, *e = end_of_p(url);
 	size_t x = 0;
@@ -2950,7 +2953,7 @@ SWITCH_DECLARE(char *) switch_url_encode_opt(const char *url, char *buf, size_t 
 			}
 		}
 
-		if (!ok && (*p < ' ' || *p > '~' || strchr(SWITCH_URL_UNSAFE, *p))) {
+		if (!ok && (*p < ' ' || *p > '~' || strchr(url_unsafe, *p))) {
 			if ((x + 3) > len) {
 				break;
 			}
@@ -2963,12 +2966,19 @@ SWITCH_DECLARE(char *) switch_url_encode_opt(const char *url, char *buf, size_t 
 	}
 	buf[x] = '\0';
 
+	return x;
+}
+
+SWITCH_DECLARE(char *) switch_url_encode_opt(const char *url, char *buf, size_t len, switch_bool_t double_encode)
+{
+	switch_url_encode_opt_chars(url, buf, len, SWITCH_FALSE, SWITCH_URL_UNSAFE);
 	return buf;
 }
 
 SWITCH_DECLARE(char *) switch_url_encode(const char *url, char *buf, size_t len)
 {
-	return switch_url_encode_opt(url, buf, len, SWITCH_FALSE);
+	switch_url_encode_opt_chars(url, buf, len, SWITCH_FALSE, SWITCH_URL_UNSAFE);
+	return buf;
 }
 
 SWITCH_DECLARE(char *) switch_url_decode(char *s)

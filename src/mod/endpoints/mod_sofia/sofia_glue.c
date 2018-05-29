@@ -2877,7 +2877,7 @@ char *sofia_glue_encode_fs_path(const char *route_val)
 	encoded_len = (int)(strlen(route_val) * 3) + 10;
 	switch_zmalloc(encoded, encoded_len);
 	switch_copy_string(encoded, ";fs_path=", 10);
-	switch_url_encode(route_val, encoded + 9, encoded_len - 9);
+	switch_url_encode_chars(route_val, encoded + 9, encoded_len - 9, SWITCH_URL_UNSAFE",");
 	return encoded;
 }
 
