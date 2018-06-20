@@ -527,7 +527,7 @@ char *sofia_overcome_sip_uri_weakness(switch_core_session_t *session, const char
 	}
 
 	if (params) {
-		new_uri = switch_core_session_sprintf(session, "%s%s%s%s%s;%s%s", uri_only ? "" : "<", stripped, transport_param, transport_str, params, uri_only ? "" : ">");
+		new_uri = switch_core_session_sprintf(session, "%s%s%s%s;%s%s", uri_only ? "" : "<", stripped, transport_param, transport_str, params, uri_only ? "" : ">");
 	} else {
 		new_uri = switch_core_session_sprintf(session, "%s%s%s%s%s", uri_only ? "" : "<", stripped, transport_param, transport_str, uri_only ? "" : ">");
 	}
