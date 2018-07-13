@@ -1,4 +1,4 @@
-/* 
+/*
  * FreeSWITCH Modular Media Switching Software Library / Soft-Switch Application
  * Copyright (C) 2005-2014, Anthony Minessale II <anthm@freeswitch.org>
  *
@@ -22,7 +22,7 @@
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- * 
+ *
  * Rupa Schomaker <rupa@rupa.com>
  * Yossi Neiman <mishehu@freeswitch.org>
  * Seven Du <dujinfang@gmail.com>
@@ -45,15 +45,16 @@ SWITCH_MODULE_SHUTDOWN_FUNCTION(mod_curl_shutdown);
 SWITCH_MODULE_RUNTIME_FUNCTION(mod_curl_runtime);
 SWITCH_MODULE_LOAD_FUNCTION(mod_curl_load);
 
-/* SWITCH_MODULE_DEFINITION(name, load, shutdown, runtime) 
+/* SWITCH_MODULE_DEFINITION(name, load, shutdown, runtime)
  * Defines a switch_loadable_module_function_table_t and a static const char[] modname
  */
 SWITCH_MODULE_DEFINITION(mod_curl, mod_curl_load, mod_curl_shutdown, NULL);
 
-static char *SYNTAX = "curl url [headers|json|content-type <mime-type>|connect-timeout <seconds>|timeout <seconds>] [get|head|post|delete|put [data]]";
+static char *SYNTAX = "curl url [headers|json|content-type <mime-type>|connect-timeout <seconds>|timeout <seconds>|append_headers <header_name:header_value>[|append_headers <header_name:header_value>]] [get|head|post|delete|put [data]]";
 
 #define HTTP_SENDFILE_ACK_EVENT "curl_sendfile::ack"
 #define HTTP_SENDFILE_RESPONSE_SIZE 32768
+#define HTTP_MAX_APPEND_HEADERS 10
 
 static struct {
 	switch_memory_pool_t *pool;
@@ -160,7 +161,7 @@ static size_t read_callback(void *ptr, size_t size, size_t nmemb, void *stream)
 	return ncur;
 }
 
-static http_data_t *do_lookup_url(switch_memory_pool_t *pool, const char *url, const char *method, const char *data, const char *content_type, curl_options_t *options)
+static http_data_t *do_lookup_url(switch_memory_pool_t *pool, const char *url, const char *method, const char *data, const char *content_type, char *append_headers[], curl_options_t *options)
 {
 	switch_CURL *curl_handle = NULL;
 	long httpRes = 0;
@@ -197,6 +198,16 @@ static http_data_t *do_lookup_url(switch_memory_pool_t *pool, const char *url, c
 		switch_curl_easy_setopt(curl_handle, CURLOPT_SSL_VERIFYPEER, 0);
 		switch_curl_easy_setopt(curl_handle, CURLOPT_SSL_VERIFYHOST, 0);
 	}
+
+	if (append_headers) {
+		int ah_index = 0;
+		while(append_headers[ah_index] && *append_headers[ah_index]) {
+			switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_DEBUG, "CURL append_header_%d: %s\n", ah_index, append_headers[ah_index]);
+			headers = switch_curl_slist_append(headers, append_headers[ah_index]);
+			ah_index++;
+		}
+	}
+
 	if (!strcasecmp(method, "head")) {
 		switch_curl_easy_setopt(curl_handle, CURLOPT_NOBODY, 1);
 	} else if (!strcasecmp(method, "post")) {
@@ -205,7 +216,6 @@ static http_data_t *do_lookup_url(switch_memory_pool_t *pool, const char *url, c
 		if (content_type) {
 			char *ct = switch_mprintf("Content-Type: %s", content_type);
 			headers = switch_curl_slist_append(headers, ct);
-			switch_curl_easy_setopt(curl_handle, CURLOPT_HTTPHEADER, headers);
 			switch_safe_free(ct);
 		}
 		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_DEBUG, "Post data: %s\n", data);
@@ -216,7 +226,6 @@ static http_data_t *do_lookup_url(switch_memory_pool_t *pool, const char *url, c
 		if (content_type) {
 			char *ct = switch_mprintf("Content-Type: %s", content_type);
 			headers = switch_curl_slist_append(headers, ct);
-			switch_curl_easy_setopt(curl_handle, CURLOPT_HTTPHEADER, headers);
 			switch_safe_free(ct);
 		}
 		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_DEBUG, "DELETE data: %s\n", data);
@@ -231,13 +240,17 @@ static http_data_t *do_lookup_url(switch_memory_pool_t *pool, const char *url, c
 			char *ct = switch_mprintf("Content-Type: %s", content_type);
 			headers = switch_curl_slist_append(headers, ct);
 			headers = switch_curl_slist_append(headers, "Expect:");
-			switch_curl_easy_setopt(curl_handle, CURLOPT_HTTPHEADER, headers);
 			switch_safe_free(ct);
 		}
 		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_DEBUG, "PUT data: %s\n", data);
 	} else {
 		switch_curl_easy_setopt(curl_handle, CURLOPT_HTTPGET, 1);
 	}
+
+	if (headers) {
+		switch_curl_easy_setopt(curl_handle, CURLOPT_HTTPHEADER, headers);
+	}
+
 	switch_curl_easy_setopt(curl_handle, CURLOPT_FOLLOWLOCATION, 1);
 	switch_curl_easy_setopt(curl_handle, CURLOPT_MAXREDIRS, 15);
 	switch_curl_easy_setopt(curl_handle, CURLOPT_HTTPAUTH, CURLAUTH_ANY);
@@ -273,14 +286,14 @@ static char *print_json(switch_memory_pool_t *pool, http_data_t *http_data)
 	char *data = NULL;
 	char tmp[32], *f = NULL;
 	switch_curl_slist_t *header = http_data->headers;
-	
+
 	if(!top || !headers) {
 		cJSON_Delete(headers);
-		
+
 		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "Unable to alloc memory for cJSON structures.\n");
 		goto curl_json_output_end;
 	}
-	
+
 	switch_snprintf(tmp, sizeof(tmp), "%ld", http_data->http_response_code);
 	cJSON_AddItemToObject(top, "status_code", cJSON_CreateString(tmp));
 	if (http_data->http_response) {
@@ -334,7 +347,7 @@ static char *print_json(switch_memory_pool_t *pool, http_data_t *http_data)
 	f = cJSON_PrintUnformatted(top);
 	data = switch_core_strdup(pool, f);
 	switch_safe_free(f);
-	
+
 curl_json_output_end:
 	cJSON_Delete(top);		/* should free up all children */
 	return data;
@@ -344,7 +357,7 @@ static size_t http_sendfile_response_callback(void *ptr, size_t size, size_t nme
 {
 	register unsigned int realsize = (unsigned int) (size * nmemb);
 	http_sendfile_data_t *http_data = data;
-	
+
 	if(http_data->sendfile_response_count + realsize < HTTP_SENDFILE_RESPONSE_SIZE)
 	{
 		// I'm not sure why we need the (realsize+1) here, but it truncates the data by 1 char if I don't do this
@@ -356,7 +369,7 @@ static size_t http_sendfile_response_callback(void *ptr, size_t size, size_t nme
 		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "Response page is more than %d bytes long, truncating.\n", HTTP_SENDFILE_RESPONSE_SIZE);
 		realsize = 0;
 	}
-	
+
 	return realsize;
 }
 
@@ -365,53 +378,53 @@ static void http_sendfile_initialize_curl(http_sendfile_data_t *http_data)
 {
 	uint8_t count;
 	http_data->curl_handle = curl_easy_init();
-	
+
 	if (!strncasecmp(http_data->url, "https", 5))
 	{
 		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_WARNING, "Not verifying TLS cert for %s; connection is not secure\n", http_data->url);
 		curl_easy_setopt(http_data->curl_handle, CURLOPT_SSL_VERIFYPEER, 0);
 		curl_easy_setopt(http_data->curl_handle, CURLOPT_SSL_VERIFYHOST, 0);
 	}
-	
-	/* From the docs: 
-	 * Optionally, you can provide data to POST using the CURLOPT_READFUNCTION and CURLOPT_READDATA 
+
+	/* From the docs:
+	 * Optionally, you can provide data to POST using the CURLOPT_READFUNCTION and CURLOPT_READDATA
 	 * options but then you must make sure to not set CURLOPT_POSTFIELDS to anything but NULL
 	 * curl_easy_setopt(curl_handle, CURLOPT_POSTFIELDSIZE, strlen(data));
 	 * curl_easy_setopt(curl_handle, CURLOPT_POSTFIELDS, (void *) data);
 	 */
-	
+
 	// switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_DEBUG, "Post data: %s\n", data);
-	
+
 	curl_easy_setopt(http_data->curl_handle, CURLOPT_FOLLOWLOCATION, 1);
 	curl_easy_setopt(http_data->curl_handle, CURLOPT_MAXREDIRS, 15);
 	curl_easy_setopt(http_data->curl_handle, CURLOPT_URL, http_data->url);
 	curl_easy_setopt(http_data->curl_handle, CURLOPT_NOSIGNAL, 1);
 	curl_easy_setopt(http_data->curl_handle, CURLOPT_USERAGENT, "freeswitch-curl/1.0");
-	
+
 	http_data->sendfile_response = switch_core_alloc(http_data->pool, sizeof(char) * HTTP_SENDFILE_RESPONSE_SIZE);
 	memset(http_data->sendfile_response, 0, sizeof(char) * HTTP_SENDFILE_RESPONSE_SIZE);
-	
+
 	// Set the function where we will copy out the response body data to
 	curl_easy_setopt(http_data->curl_handle, CURLOPT_WRITEFUNCTION, http_sendfile_response_callback);
 	curl_easy_setopt(http_data->curl_handle, CURLOPT_WRITEDATA, (void *) http_data);
-	
-	/* Add the file to upload as a POST form field */ 
+
+	/* Add the file to upload as a POST form field */
 	curl_formadd(&http_data->formpost, &http_data->lastptr, CURLFORM_COPYNAME, http_data->filename_element_name, CURLFORM_FILE, http_data->filename_element, CURLFORM_END);
-	
+
 	if(!zstr(http_data->extrapost_elements))
 	{
 		// Now to parse out the individual post element/value pairs
 		char *argv[64] = { 0 }; // Probably don't need 64 but eh does it really use that much memory?
 		uint32_t argc = 0;
 		char *temp_extrapost = switch_core_strdup(http_data->pool, http_data->extrapost_elements);
-		
+
 		argc = switch_separate_string(temp_extrapost, '&', argv, (sizeof(argv) / sizeof(argv[0])));
-		
+
 		for(count = 0; count < argc; count++)
 		{
 			char *argv2[4] = { 0 };
 			uint32_t argc2 = switch_separate_string(argv[count], '=', argv2, (sizeof(argv2) / sizeof(argv2[0])));
-			
+
 			if(argc2 == 2) {
 				switch_url_decode(argv2[0]);
 				switch_url_decode(argv2[1]);
@@ -419,19 +432,19 @@ static void http_sendfile_initialize_curl(http_sendfile_data_t *http_data)
 			}
 		}
 	}
-	
-	/* Fill in the submit field too, even if this isn't really needed */ 
+
+	/* Fill in the submit field too, even if this isn't really needed */
 	curl_formadd(&http_data->formpost, &http_data->lastptr, CURLFORM_COPYNAME, "submit", CURLFORM_COPYCONTENTS, "or_die", CURLFORM_END);
-	
-	/* what URL that receives this POST */ 
+
+	/* what URL that receives this POST */
 	curl_easy_setopt(http_data->curl_handle, CURLOPT_HTTPPOST, http_data->formpost);
-	
+
 	// This part actually fires off the curl, captures the HTTP response code, and then frees up the handle.
 	curl_easy_perform(http_data->curl_handle);
 	curl_easy_getinfo(http_data->curl_handle, CURLINFO_RESPONSE_CODE, &http_data->http_response_code);
-	
+
 	curl_easy_cleanup(http_data->curl_handle);
-		
+
 	// Clean up the form data from POST
 	curl_formfree(http_data->formpost);
 }
@@ -454,14 +467,14 @@ static switch_status_t http_sendfile_test_file_open(http_sendfile_data_t *http_d
 			else
 				switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "Unable to create event to notify of failure to open file %s\n", http_data->filename_element);
 		}
-		
+
 		if((switch_test_flag(http_data, CSO_STREAM) || switch_test_flag(http_data, CSO_NONE)) && http_data->stream)
 			http_data->stream->write_function(http_data->stream, "-Err Unable to open file %s\n", http_data->filename_element);
-		
+
 		if(switch_test_flag(http_data, CSO_NONE) && !http_data->stream)
 			switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "curl_sendfile: Unable to open file %s\n", http_data->filename_element);
 	}
-	
+
 	return retval;
 }
 
@@ -474,31 +487,31 @@ static void http_sendfile_success_report(http_sendfile_data_t *http_data, switch
 			char *code_as_string = switch_core_alloc(http_data->pool, 16);
 			memset(code_as_string, 0, 16);
 			switch_snprintf(code_as_string, 16, "%d", http_data->http_response_code);
-			
+
 			switch_event_add_header_string(event, SWITCH_STACK_BOTTOM, "Command-Execution-Identifier", http_data->identifier_str);
 			switch_event_add_header_string(event, SWITCH_STACK_BOTTOM, "Filename", http_data->filename_element);
 			switch_event_add_header_string(event, SWITCH_STACK_BOTTOM, "File-Access", "Success");
 			switch_event_add_header_string(event, SWITCH_STACK_BOTTOM, "REST-HTTP-Code", code_as_string);
 			switch_event_add_body(event, "%s", http_data->sendfile_response);
-			
+
 			switch_event_fire(&event);
 			switch_event_destroy(&event);
 		}
 		else
 			switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "Unable to create a event to report on success of curl_sendfile.\n");
 	}
-	
+
 	if((switch_test_flag(http_data, CSO_STREAM) || switch_test_flag(http_data, CSO_NONE) || switch_test_flag(http_data, CSO_EVENT)) && http_data->stream)
 	{
 		if(http_data->http_response_code == 200)
 			http_data->stream->write_function(http_data->stream, "+200 Ok\n");
 		else
 			http_data->stream->write_function(http_data->stream, "-%d Err\n", http_data->http_response_code);
-		
+
 		if(http_data->sendfile_response_count && switch_test_flag(http_data, CSO_STREAM))
 			http_data->stream->write_function(http_data->stream, "%s\n", http_data->sendfile_response);
 	}
-	
+
 	if(switch_test_flag(http_data, CSO_NONE) && !http_data->stream)
 		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_INFO, "Sending of file %s to url %s resulted with code %lu\n", http_data->filename_element, http_data->url, http_data->http_response_code);
 }
@@ -512,31 +525,31 @@ SWITCH_STANDARD_APP(http_sendfile_app_function)
 	http_sendfile_data_t *http_data = NULL;
 	switch_memory_pool_t *pool = switch_core_session_get_pool(session);
 	switch_channel_t *channel = switch_core_session_get_channel(session);
-	
+
 	assert(channel != NULL);
-	
+
 	http_data = switch_core_alloc(pool, sizeof(http_sendfile_data_t));
 	memset(http_data, 0, sizeof(http_sendfile_data_t));
-	
+
 	http_data->pool = pool;
-	
+
 	// Either the parameters are provided on the data="" or else they are provided as chanvars.  No mixing & matching
 	if(!zstr(data))
 	{
 		http_data->mydata = switch_core_strdup(http_data->pool, data);
-		
-		if ((argc = switch_separate_string(http_data->mydata, ' ', argv, (sizeof(argv) / sizeof(argv[0]))))) 
+
+		if ((argc = switch_separate_string(http_data->mydata, ' ', argv, (sizeof(argv) / sizeof(argv[0])))))
 		{
 			uint8_t i = 0;
-			
+
 			if (argc < 2 || argc > 5)
 				goto http_sendfile_app_usage;
-			
+
 			http_data->url = switch_core_strdup(http_data->pool, argv[i++]);
-			
+
 			switch_url_decode(argv[i]);
 			argc2 = switch_separate_string(argv[i++], '=', argv2, (sizeof(argv2) / sizeof(argv2[0])));
-			
+
 			if(argc2 == 2)
 			{
 				http_data->filename_element_name = switch_core_strdup(pool, argv2[0]);
@@ -544,11 +557,11 @@ SWITCH_STANDARD_APP(http_sendfile_app_function)
 			}
 			else
 				goto http_sendfile_app_usage;
-			
+
 			if(argc > 2)
 			{
 				http_data->extrapost_elements = switch_core_strdup(pool, argv[i++]);
-				
+
 				if(argc > 3)
 				{
 					if(!strncasecmp(argv[i++], "event", 5))
@@ -556,7 +569,7 @@ SWITCH_STANDARD_APP(http_sendfile_app_function)
 						switch_set_flag(http_data, CSO_EVENT);
 						switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_INFO, "Setting output to event handler.\n");
 					}
-					
+
 					if(argc > 4)
 					{
 						if(strncasecmp(argv[i], "uuid", 4))
@@ -572,16 +585,16 @@ SWITCH_STANDARD_APP(http_sendfile_app_function)
 	{
 		char *send_output = (char *) switch_channel_get_variable_dup(channel, "curl_sendfile_report", SWITCH_TRUE, -1);
 		char *identifier = (char *) switch_channel_get_variable_dup(channel, "curl_sendfile_identifier", SWITCH_TRUE, -1);
-		
+
 		http_data->url = (char *) switch_channel_get_variable_dup(channel, "curl_sendfile_url", SWITCH_TRUE, -1);
 		http_data->filename_element_name = (char *) switch_channel_get_variable_dup(channel, "curl_sendfile_filename_element", SWITCH_TRUE, -1);
 		http_data->filename_element = (char *) switch_channel_get_variable_dup(channel, "curl_sendfile_filename", SWITCH_TRUE, -1);
 		http_data->extrapost_elements = (char *) switch_channel_get_variable_dup(channel, "curl_sendfile_extrapost", SWITCH_TRUE, -1);
-		
-		
+
+
 		if(zstr(http_data->url) || zstr(http_data->filename_element) || zstr(http_data->filename_element_name))
 			goto http_sendfile_app_usage;
-		
+
 		if(!zstr(send_output))
 		{
 			if(!strncasecmp(send_output, "event", 5))
@@ -599,7 +612,7 @@ SWITCH_STANDARD_APP(http_sendfile_app_function)
 			switch_set_flag(http_data, CSO_NONE);
 			switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_INFO, "No parameter specified for curl_sendfile_report.  Setting default of 'none'.\n");
 		}
-		
+
 		if(!zstr(identifier))
 		{
 			if(!strncasecmp(identifier, "uuid", 4))
@@ -608,33 +621,33 @@ SWITCH_STANDARD_APP(http_sendfile_app_function)
 				http_data->identifier_str = identifier;
 		}
 	}
-	
+
 	switch_url_decode(http_data->filename_element_name);
 	switch_url_decode(http_data->filename_element);
-	
+
 	// We need to check the file now...
 	if(http_sendfile_test_file_open(http_data, event) != SWITCH_STATUS_SUCCESS)
 		goto http_sendfile_app_done;
-	
+
 	switch_file_close(http_data->file_handle);
-	
+
 	switch_url_decode(http_data->url);
-	
+
 	http_sendfile_initialize_curl(http_data);
-	
+
 	http_sendfile_success_report(http_data, event);
-	
+
 	goto http_sendfile_app_done;
-	
+
 http_sendfile_app_usage:
 	switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "Failure:  Usage: <data=\"%s\">\nOr you can set chanvars curl_senfile_url, curl_sendfile_filename_element, curl_sendfile_filename, curl_sendfile_extrapost\n", HTTP_SENDFILE_APP_SYNTAX);
-	
+
 http_sendfile_app_done:
 	if (http_data->headers)
 	{
 		switch_curl_slist_free_all(http_data->headers);
 	}
-	
+
 	return;
 }
 
@@ -648,7 +661,7 @@ SWITCH_STANDARD_API(http_sendfile_function)
 	http_sendfile_data_t *http_data = NULL;
 	switch_memory_pool_t *pool = NULL;
 	switch_event_t *event = NULL;
-	
+
 	if(zstr(cmd))
 	{
 		status = SWITCH_STATUS_SUCCESS;
@@ -664,31 +677,31 @@ SWITCH_STANDARD_API(http_sendfile_function)
 		switch_core_new_memory_pool(&pool);
 		new_memory_pool = SWITCH_TRUE;  // So we can properly destroy the memory pool
 	}
-	
+
 	http_data = switch_core_alloc(pool, sizeof(http_sendfile_data_t));
 	memset(http_data, 0, sizeof(http_sendfile_data_t));
-	
+
 	http_data->mydata = switch_core_strdup(pool, cmd);
 	http_data->stream = stream;
 	http_data->pool = pool;
-	
-	// stream->write_function(stream,"\ncmd is %s\nmydata is %s\n", cmd, http_data->mydata); 
-	
-	if ((argc = switch_separate_string(http_data->mydata, ' ', argv, (sizeof(argv) / sizeof(argv[0]))))) 
+
+	// stream->write_function(stream,"\ncmd is %s\nmydata is %s\n", cmd, http_data->mydata);
+
+	if ((argc = switch_separate_string(http_data->mydata, ' ', argv, (sizeof(argv) / sizeof(argv[0])))))
 	{
 		uint8_t i = 0;
-		
+
 		if (argc < 2 || argc > 5)
 		{
 			status = SWITCH_STATUS_SUCCESS;
 			goto http_sendfile_usage;
 		}
-		
+
 		http_data->url = switch_core_strdup(pool, argv[i++]);
-		
+
 		switch_url_decode(argv[i]);
 		argc2 = switch_separate_string(argv[i++], '=', argv2, (sizeof(argv2) / sizeof(argv2[0])));
-		
+
 		if(argc2 == 2)
 		{
 			http_data->filename_element_name = switch_core_strdup(pool, argv2[0]);
@@ -696,14 +709,14 @@ SWITCH_STANDARD_API(http_sendfile_function)
 		}
 		else
 			goto http_sendfile_usage;
-		
+
 		switch_url_decode(http_data->filename_element_name);
 		switch_url_decode(http_data->filename_element);
-		
+
 		if(argc > 2)
 		{
 			http_data->extrapost_elements = switch_core_strdup(pool, argv[i++]);
-			
+
 			if(argc > 3)
 			{
 				if(!strncasecmp(argv[i], "event", 5))
@@ -719,31 +732,31 @@ SWITCH_STANDARD_API(http_sendfile_function)
 				{
 					if(strncasecmp(argv[i], "none", 4))
 						switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_INFO, "Invalid 4th parameter set for curl_sendfile.  Defaulting to \"none\"\n");
-					
+
 					switch_set_flag(http_data, CSO_NONE);
 				}
-				
+
 				i++;
-				
+
 				if(argc > 4)
 					http_data->identifier_str = switch_core_strdup(pool, argv[i++]);
 			}
 		}
 	}
-	
+
 	// We need to check the file now...
 	if(http_sendfile_test_file_open(http_data, event) != SWITCH_STATUS_SUCCESS)
 		goto http_sendfile_done;
-	
-	
+
+
 	switch_file_close(http_data->file_handle);
-	
+
 	switch_url_decode(http_data->url);
-	
+
 	http_sendfile_initialize_curl(http_data);
-	
+
 	http_sendfile_success_report(http_data, event);
-	
+
 	status = SWITCH_STATUS_SUCCESS;
 	goto http_sendfile_done;
 
@@ -756,12 +769,12 @@ http_sendfile_done:
 	{
 		switch_curl_slist_free_all(http_data->headers);
 	}
-	
+
 	if (new_memory_pool == SWITCH_TRUE)
 	{
 		switch_core_destroy_memory_pool(&pool);
 	}
-	
+
 	return status;
 }
 
@@ -787,6 +800,8 @@ SWITCH_STANDARD_APP(curl_app_function)
 	int i = 0;
 	curl_options_t options = { 0 };
 	const char *curl_timeout;
+	char *append_headers[HTTP_MAX_APPEND_HEADERS + 1] = { 0 };
+	int ah_index = 0;
 
 	if (!(mydata = switch_core_session_strdup(session, data))) {
 		return;
@@ -834,6 +849,11 @@ SWITCH_STANDARD_APP(curl_app_function)
 				if (++i < argc) {
 					content_type = switch_core_strdup(pool, argv[i]);
 				}
+			} else if (!strcasecmp("append_headers", argv[i])) {
+				if (++i < argc) {
+					if (ah_index == HTTP_MAX_APPEND_HEADERS) continue;
+					append_headers[ah_index++] = argv[i];
+				}
 			}
 		}
 	}
@@ -847,7 +867,8 @@ SWITCH_STANDARD_APP(curl_app_function)
 	if (curl_timeout) options.timeout = atoi(curl_timeout);
 
 
-	http_data = do_lookup_url(pool, url, method, postdata, content_type, &options);
+	http_data = do_lookup_url(pool, url, method, postdata, content_type, append_headers, &options);
+
 	if (do_json) {
 		switch_channel_set_variable(channel, "curl_response_data", print_json(pool, http_data));
 	} else {
@@ -897,6 +918,8 @@ SWITCH_STANDARD_API(curl_function)
 	switch_curl_slist_t *slist = NULL;
 	http_data_t *http_data = NULL;
 	int i = 0;
+	char *append_headers[HTTP_MAX_APPEND_HEADERS + 1] = { 0 };
+	int ah_index = 0;
 
 	switch_memory_pool_t *pool = NULL;
 	curl_options_t options = { 0 };
@@ -974,10 +997,15 @@ SWITCH_STANDARD_API(curl_function)
 						switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_WARNING, "Invalid timeout!\n");
 					}
 				}
+			} else if (!strcasecmp("append_headers", argv[i])) {
+				if (++i < argc) {
+					if (ah_index == HTTP_MAX_APPEND_HEADERS) continue;
+					append_headers[ah_index++] = argv[i];
+				}
 			}
 		}
 
-		http_data = do_lookup_url(pool, url, method, postdata, content_type, &options);
+		http_data = do_lookup_url(pool, url, method, postdata, content_type, append_headers, &options);
 		if (do_json) {
 			stream->write_function(stream, "%s", print_json(pool, http_data));
 		} else {
@@ -1030,7 +1058,7 @@ SWITCH_MODULE_LOAD_FUNCTION(mod_curl_load)
 	SWITCH_ADD_API(api_interface, "curl", "curl API", curl_function, SYNTAX);
 	SWITCH_ADD_APP(app_interface, "curl", "Perform a http request", "Perform a http request",
 				   curl_app_function, SYNTAX, SAF_SUPPORT_NOMEDIA | SAF_ROUTING_EXEC);
-	
+
 	SWITCH_ADD_API(api_interface, "curl_sendfile", "curl_sendfile API", http_sendfile_function, HTTP_SENDFILE_SYNTAX);
 	SWITCH_ADD_APP(app_interface, "curl_sendfile", "Send a file and some optional post variables via HTTP", "Send a file and some optional post variables via HTTP",
 				   http_sendfile_app_function, HTTP_SENDFILE_APP_SYNTAX, SAF_SUPPORT_NOMEDIA | SAF_ROUTING_EXEC);
@@ -1045,7 +1073,7 @@ SWITCH_MODULE_SHUTDOWN_FUNCTION(mod_curl_shutdown)
 {
 
 	switch_event_free_subclass(HTTP_SENDFILE_ACK_EVENT);
-	
+
 	/* Cleanup dynamically allocated config settings */
 	return SWITCH_STATUS_SUCCESS;
 }
