@@ -860,6 +860,8 @@ SWITCH_STANDARD_APP(curl_app_function)
 					if (ah_index == HTTP_MAX_APPEND_HEADERS) continue;
 					append_headers[ah_index++] = argv[i];
 				}
+			} else if (!strcasecmp("insecure", argv[i])) {
+				options.insecure = 1;
 			}
 		}
 	}
