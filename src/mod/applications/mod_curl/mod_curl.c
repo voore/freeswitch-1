@@ -788,7 +788,7 @@ SWITCH_STANDARD_APP(curl_app_function)
 {
 	switch_status_t status = SWITCH_STATUS_SUCCESS;
 
-	char *argv[10] = { 0 };
+	char *argv[30] = { 0 };
 	int argc;
 	char *mydata = NULL;
 
@@ -914,7 +914,7 @@ SWITCH_STANDARD_APP(curl_app_function)
 SWITCH_STANDARD_API(curl_function)
 {
 	switch_status_t status;
-	char *argv[10] = { 0 };
+	char *argv[30] = { 0 };
 	int argc;
 	char *mydata = NULL;
 	char *url = NULL;
