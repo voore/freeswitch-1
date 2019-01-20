@@ -75,6 +75,7 @@ static struct {
 	switch_mutex_t *mutex;
 	switch_memory_pool_t *pool;
 	char odbc_dsn[1024];
+	switch_cache_db_handle_type_t db_type;
 } globals;
 
 #define DIR_PROFILE_CONFIGITEM_COUNT 100
@@ -247,8 +248,16 @@ typedef enum {
 	SEARCH_BY_FIRST_NAME,
 	SEARCH_BY_LAST_NAME,
 	SEARCH_BY_FIRST_AND_LAST_NAME,
-	SEARCH_BY_FULL_NAME
+	SEARCH_BY_FULL_NAME,
+	SEARCH_BY_NONE // Should be last value
 } search_by_t;
+
+static char *search_by_string[SEARCH_BY_NONE] = {
+		"first_name",
+		"last_name",
+		"first_and_last_name",
+		"full_name"
+};
 
 struct search_params {
 	char digits[255];
@@ -494,6 +503,7 @@ static switch_status_t load_config(switch_bool_t reload)
 
 	dbh = directory_get_db_handle();
 	if (dbh) {
+		globals.db_type = switch_cache_db_get_type(dbh);
 		if (!reload) {
 			switch_cache_db_test_reactive(dbh, "delete from directory_search where uuid != '' and name_visible != '' ", "drop table directory_search", dir_sql);
 		}
@@ -632,6 +642,10 @@ static switch_status_t populate_database(switch_core_session_t *session, dir_pro
 	switch_xml_t group = NULL, groups = NULL, users = NULL;
 	switch_event_create(&xml_params, SWITCH_EVENT_REQUEST_PARAMS);
 	switch_assert(xml_params);
+	if (group_selection) {
+		switch_event_add_header_string(xml_params, SWITCH_STACK_BOTTOM, "directory_group_selection", group_selection);
+		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_DEBUG, "Filtering for group %s\n", group_selection);
+	}
 
 	if (switch_xml_locate_domain(domain_name, xml_params, &xml_root, &x_domain) != SWITCH_STATUS_SUCCESS) {
 		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_WARNING, "Cannot locate domain %s\n", domain_name);
@@ -819,7 +833,12 @@ switch_status_t gather_name_digit(switch_core_session_t *session, dir_profile_t 
 
 		/* Gather the user Name */
 
-		switch_snprintf(macro, sizeof(macro), "%s:%c", (params->search_by == SEARCH_BY_LAST_NAME ? "last_name" : "first_name"), *profile->switch_order_key);
+		if (params->search_by <= SEARCH_BY_LAST_NAME) {
+			switch_snprintf(macro, sizeof(macro), "%s:%c", search_by_string[params->search_by], *profile->switch_order_key);
+		} else {
+			switch_snprintf(macro, sizeof(macro), "%s", search_by_string[params->search_by]);
+		}
+
 		switch_ivr_phrase_macro(session, DIR_INTRO, macro, NULL, &args);
 
 		while (switch_channel_ready(channel)) {
@@ -830,7 +849,7 @@ switch_status_t gather_name_digit(switch_core_session_t *session, dir_profile_t 
 			if (cbr.digit == *profile->switch_order_key) {
 				if (params->search_by == SEARCH_BY_LAST_NAME) {
 					params->search_by = SEARCH_BY_FIRST_NAME;
-				} else {
+				} else if (params->search_by == SEARCH_BY_FIRST_NAME) {
 					params->search_by = SEARCH_BY_LAST_NAME;
 				}
 				loop = 1;
@@ -852,7 +871,7 @@ switch_status_t gather_name_digit(switch_core_session_t *session, dir_profile_t 
 switch_status_t navigate_entrys(switch_core_session_t *session, dir_profile_t *profile, search_params_t *params)
 {
 	switch_status_t status = SWITCH_STATUS_SUCCESS;
-	char *sql = NULL, *sql_where = NULL;
+	char *sql = NULL, *sql_where = NULL, *sql_order = NULL;
 	char entry_count[80] = "";
 	callback_t cbt = { 0 };
 	int result_count;
@@ -867,13 +886,19 @@ switch_status_t navigate_entrys(switch_core_session_t *session, dir_profile_t *p
 				globals.hostname, switch_core_session_get_uuid(session), "last_name_digit", params->digits, "first_name_digit", params->digits);
 	} else if (params->search_by == SEARCH_BY_FULL_NAME) {
 		sql_where = switch_mprintf("hostname = '%q' and uuid = '%q' and name_visible = 1 and full_name_digit like '%%%q%%'",
-				globals.hostname, switch_core_session_get_uuid(session), "last_name_digit", params->digits, "first_name_digit", params->digits);
+								   globals.hostname, switch_core_session_get_uuid(session), params->digits);
+		if (globals.db_type == SCDB_TYPE_CORE_DB) {
+			sql_order = switch_mprintf("order by instr(full_name_digit, '%q') limit 50", params->digits);
+		} else {
+			sql_order = switch_mprintf("order by position('%q' in full_name_digit) limit 50", params->digits);
+		};
+
 	} else {
 		sql_where = switch_mprintf("hostname = '%q' and uuid = '%q' and name_visible = 1 and %s like '%q%%'",
 				globals.hostname, switch_core_session_get_uuid(session), (params->search_by == SEARCH_BY_LAST_NAME ? "last_name_digit" : "first_name_digit"), params->digits);
 	}
 
-	sql = switch_mprintf("select count(*) from (select distinct first_name, last_name, extension from directory_search where %s) AS dsearch", sql_where);
+	sql = switch_mprintf("select count(*) from (select distinct first_name, last_name, extension from directory_search where %s %s) AS dsearch", sql_where, sql_order ? sql_order : "");
 
 	directory_execute_sql_callback(globals.mutex, sql, sql2str_callback, &cbt);
 	switch_safe_free(sql);
@@ -900,7 +925,7 @@ switch_status_t navigate_entrys(switch_core_session_t *session, dir_profile_t *p
 	memset(&listing_cbt, 0, sizeof(listing_cbt));
 	listing_cbt.params = params;
 
-	sql = switch_mprintf("select extension, full_name, last_name, first_name, name_visible, exten_visible from directory_search where %s group by extension, full_name, last_name, first_name, name_visible, exten_visible order by last_name, first_name", sql_where);
+	sql = switch_mprintf("select extension, full_name, last_name, first_name, name_visible, exten_visible from directory_search where %s group by extension, full_name, last_name, first_name, name_visible, exten_visible %s", sql_where, sql_order ? sql_order : "order by last_name, first_name");
 
 	for (cur_entry = 0; cur_entry < result_count; cur_entry++) {
 		listing_cbt.index = 0;
@@ -942,6 +967,7 @@ switch_status_t navigate_entrys(switch_core_session_t *session, dir_profile_t *p
   end:
 	switch_safe_free(sql);
 	switch_safe_free(sql_where);
+	switch_safe_free(sql_order);
 	return status;
 
 }
@@ -1023,6 +1049,8 @@ SWITCH_STANDARD_APP(directory_function)
 		s_param.search_by = SEARCH_BY_FIRST_NAME;
 	} else if (!strcasecmp(search_by, "first_and_last_name")) {
 		s_param.search_by = SEARCH_BY_FIRST_AND_LAST_NAME;
+	} else if (!strcasecmp(search_by, "full_name")) {
+		s_param.search_by = SEARCH_BY_FULL_NAME;
 	} else {
 		s_param.search_by = SEARCH_BY_LAST_NAME;
 	}
