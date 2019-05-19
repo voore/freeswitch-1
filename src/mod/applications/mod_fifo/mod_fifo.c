@@ -2988,6 +2988,7 @@ SWITCH_STANDARD_APP(fifo_function)
 			switch_channel_set_state(channel, CS_HIBERNATE);
 			goto done;
 		} else {
+			aborted = 1;
 			ts = switch_micro_time_now();
 			switch_time_exp_lt(&tm, ts);
 			switch_strftime_nocheck(date, &retsize, sizeof(date), "%Y-%m-%d %T", &tm);
