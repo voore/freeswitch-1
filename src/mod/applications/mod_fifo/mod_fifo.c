@@ -1673,9 +1673,13 @@ static void *SWITCH_THREAD_FUNC outbound_ringall_thread_run(switch_thread_t *thr
 
 		for (x = 0; x < argc; x++) {
 			char *name = switch_mprintf("variable_%s", argv[x]);
+			char *to_name = argv[x];
+			if (!strncasecmp(to_name, "nolocal:", 8)) {
+			    to_name += 8;
+			}
 
 			if ((tmp = switch_event_get_header(pop, name))) {
-				switch_event_add_header_string(ovars, SWITCH_STACK_BOTTOM, argv[x], tmp);
+				switch_event_add_header_string(ovars, SWITCH_STACK_BOTTOM, to_name, tmp);
 			}
 
 			free(name);
@@ -1807,6 +1811,7 @@ static void *SWITCH_THREAD_FUNC outbound_ringall_thread_run(switch_thread_t *thr
 	switch_channel_set_state(channel, CS_EXECUTE);
 	switch_channel_wait_for_state(channel, NULL, CS_EXECUTE);
 	switch_channel_wait_for_flag(channel, CF_BRIDGED, SWITCH_TRUE, 5000, NULL);
+	switch_channel_invert_cid(channel);
 
 	switch_core_session_rwunlock(session);
 
