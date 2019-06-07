@@ -1249,6 +1249,7 @@ SWITCH_DECLARE(switch_status_t) switch_channel_export_variable_var_check(switch_
 	const char *exports;
 	char *var, *new_exports, *new_exports_d = NULL;
 	int local = 1;
+	char *p = NULL;
 
 	exports = switch_channel_get_variable(channel, export_varname);
 
@@ -1275,6 +1276,10 @@ SWITCH_DECLARE(switch_status_t) switch_channel_export_variable_var_check(switch_
 
 	if (var && val) {
 		if (exports) {
+			// We already have it in exports
+			if ((p = strstr(exports, var)) && (p == exports || *(p-1) == ',') && ( *(p += strlen(var)) == '\0' || *p == ',') ) {
+				return SWITCH_STATUS_SUCCESS;
+			}
 			new_exports_d = switch_mprintf("%s,%s", exports, var);
 			new_exports = new_exports_d;
 		} else {
