@@ -3368,7 +3368,7 @@ SWITCH_STANDARD_APP(fifo_function)
 
 			if (node && other_session) {
 				switch_channel_t *other_channel = switch_core_session_get_channel(other_session);
-				switch_caller_profile_t *originator_cp, *originatee_cp;
+				switch_caller_profile_t *consumer_cp, *caller_cp;
 				const char *o_announce = NULL;
 				const char *record_template = NULL;
 				char *expanded = NULL;
@@ -3449,29 +3449,36 @@ SWITCH_STANDARD_APP(fifo_function)
 
 				switch_channel_answer(channel);
 
-				if (switch_channel_inbound_display(other_channel)) {
+				if (switch_channel_outbound_display(other_channel)) {
+					switch_channel_invert_cid(other_channel);
+
 					if (switch_channel_direction(other_channel) == SWITCH_CALL_DIRECTION_INBOUND) {
-						switch_channel_set_flag(other_channel, CF_BLEG);
+						switch_channel_clear_flag(channel, CF_BLEG);
+					}
+				}
+
+				if (switch_channel_inbound_display(channel)) {
+					switch_channel_invert_cid(channel);
+
+					if (switch_channel_direction(channel) == SWITCH_CALL_DIRECTION_INBOUND) {
+						switch_channel_set_flag(channel, CF_BLEG);
 					}
 				}
 
 				switch_channel_step_caller_profile(channel);
 				switch_channel_step_caller_profile(other_channel);
 
-				originator_cp = switch_channel_get_caller_profile(channel);
-				originatee_cp = switch_channel_get_caller_profile(other_channel);
+				consumer_cp = switch_channel_get_caller_profile(channel);
+				caller_cp = switch_channel_get_caller_profile(other_channel);
 
-				switch_channel_set_originator_caller_profile(other_channel, switch_caller_profile_clone(other_session, originator_cp));
-				switch_channel_set_originatee_caller_profile(channel, switch_caller_profile_clone(session, originatee_cp));
+				switch_channel_set_originatee_caller_profile(other_channel, switch_caller_profile_clone(other_session, consumer_cp));
+				switch_channel_set_originator_caller_profile(channel, switch_caller_profile_clone(session, caller_cp));
 
-				originator_cp->callee_id_name = switch_core_strdup(originator_cp->pool, originatee_cp->callee_id_name);
-				originator_cp->callee_id_number = switch_core_strdup(originator_cp->pool, originatee_cp->callee_id_number);
+				caller_cp->callee_id_name = switch_core_strdup(caller_cp->pool, consumer_cp->callee_id_name);
+				caller_cp->callee_id_number = switch_core_strdup(caller_cp->pool, consumer_cp->callee_id_number);
 
-				originatee_cp->callee_id_name = switch_core_strdup(originatee_cp->pool, originatee_cp->caller_id_name);
-				originatee_cp->callee_id_number = switch_core_strdup(originatee_cp->pool, originatee_cp->caller_id_number);
-
-				originatee_cp->caller_id_name = switch_core_strdup(originatee_cp->pool, originator_cp->caller_id_name);
-				originatee_cp->caller_id_number = switch_core_strdup(originatee_cp->pool, originator_cp->caller_id_number);
+				consumer_cp->caller_id_name = switch_core_strdup(consumer_cp->pool, caller_cp->caller_id_name);
+				consumer_cp->caller_id_name = switch_core_strdup(consumer_cp->pool, caller_cp->caller_id_number);
 
 				ts = switch_micro_time_now();
 				switch_time_exp_lt(&tm, ts);
@@ -3638,11 +3645,11 @@ SWITCH_STANDARD_APP(fifo_function)
 						switch_event_add_header_string(event, SWITCH_STACK_BOTTOM, "FIFO-Consumer-Outbound-ID", outbound_id);
 						switch_event_add_header(event, SWITCH_STACK_BOTTOM, "FIFO-Consumer-Use-Count", "%d", fifo_get_use_count(outbound_id));
 					}
-					hold_usec = originator_cp->times->hold_accum;
-					tt_usec = (switch_micro_time_now() - originator_cp->times->bridged) - hold_usec;
-					switch_event_add_header(event, SWITCH_STACK_BOTTOM, "FIFO-Consumer-Bridge-Time-us", "%"SWITCH_TIME_T_FMT, originator_cp->times->bridged);
-					switch_event_add_header(event, SWITCH_STACK_BOTTOM, "FIFO-Consumer-Bridge-Time-ms", "%"SWITCH_TIME_T_FMT, (uint64_t)(originator_cp->times->bridged / 1000));
-					switch_event_add_header(event, SWITCH_STACK_BOTTOM, "FIFO-Consumer-Bridge-Time-s", "%"SWITCH_TIME_T_FMT, (uint64_t)(originator_cp->times->bridged / 1000000));
+					hold_usec = consumer_cp->times->hold_accum;
+					tt_usec = (switch_micro_time_now() - consumer_cp->times->bridged) - hold_usec;
+					switch_event_add_header(event, SWITCH_STACK_BOTTOM, "FIFO-Consumer-Bridge-Time-us", "%"SWITCH_TIME_T_FMT, consumer_cp->times->bridged);
+					switch_event_add_header(event, SWITCH_STACK_BOTTOM, "FIFO-Consumer-Bridge-Time-ms", "%"SWITCH_TIME_T_FMT, (uint64_t)(consumer_cp->times->bridged / 1000));
+					switch_event_add_header(event, SWITCH_STACK_BOTTOM, "FIFO-Consumer-Bridge-Time-s", "%"SWITCH_TIME_T_FMT, (uint64_t)(consumer_cp->times->bridged / 1000000));
 					switch_event_add_header(event, SWITCH_STACK_BOTTOM, "FIFO-Consumer-Talk-Time-us", "%"SWITCH_TIME_T_FMT, tt_usec);
 					switch_event_add_header(event, SWITCH_STACK_BOTTOM, "FIFO-Consumer-Talk-Time-ms", "%"SWITCH_TIME_T_FMT, (uint64_t)(tt_usec / 1000));
 					switch_event_add_header(event, SWITCH_STACK_BOTTOM, "FIFO-Consumer-Talk-Time-s", "%"SWITCH_TIME_T_FMT, (uint64_t)(tt_usec / 1000000));
@@ -3671,8 +3678,8 @@ SWITCH_STANDARD_APP(fifo_function)
 					switch_channel_event_set_data(other_channel, event);
 					switch_event_add_header_string(event, SWITCH_STACK_BOTTOM, "FIFO-Name", argv[0]);
 					switch_event_add_header_string(event, SWITCH_STACK_BOTTOM, "FIFO-Action", "bridge-caller-stop");
-					hold_usec = originatee_cp->times->hold_accum;
-					tt_usec = (switch_micro_time_now() - originatee_cp->times->bridged) - hold_usec;
+					hold_usec = caller_cp->times->hold_accum;
+					tt_usec = (switch_micro_time_now() - caller_cp->times->bridged) - hold_usec;
 					switch_event_add_header(event, SWITCH_STACK_BOTTOM, "FIFO-Caller-Talk-Time-us", "%"SWITCH_TIME_T_FMT, tt_usec);
 					switch_event_add_header(event, SWITCH_STACK_BOTTOM, "FIFO-Caller-Talk-Time-ms", "%"SWITCH_TIME_T_FMT, (uint64_t)(tt_usec / 1000));
 					switch_event_add_header(event, SWITCH_STACK_BOTTOM, "FIFO-Caller-Talk-Time-s", "%"SWITCH_TIME_T_FMT, (uint64_t)(tt_usec / 1000000));
