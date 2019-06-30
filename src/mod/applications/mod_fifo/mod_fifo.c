@@ -1811,7 +1811,6 @@ static void *SWITCH_THREAD_FUNC outbound_ringall_thread_run(switch_thread_t *thr
 	switch_channel_set_state(channel, CS_EXECUTE);
 	switch_channel_wait_for_state(channel, NULL, CS_EXECUTE);
 	switch_channel_wait_for_flag(channel, CF_BRIDGED, SWITCH_TRUE, 5000, NULL);
-	switch_channel_invert_cid(channel);
 
 	switch_core_session_rwunlock(session);
 
