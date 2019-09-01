@@ -535,7 +535,6 @@ SWITCH_STANDARD_API(join_array_function)
 
     cleanup:
 
-    stream->write_function(stream, "\n");
     switch_safe_free(dup);
     return status;
 
