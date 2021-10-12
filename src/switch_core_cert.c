@@ -339,6 +339,8 @@ static int mkcert(X509 **x509p, EVP_PKEY **pkeyp, int bits, int serial, int days
 	X509 *x;
 	EVP_PKEY *pk;
 	RSA *rsa;
+	BIGNUM *bn;
+	int ret;
 	X509_NAME *name=NULL;
 	
 	switch_assert(pkeyp);
@@ -360,14 +362,26 @@ static int mkcert(X509 **x509p, EVP_PKEY **pkeyp, int bits, int serial, int days
 		x = *x509p;
 	}
 
-	rsa = RSA_generate_key(bits, RSA_F4, NULL, NULL);
+	rsa = RSA_new();
+	
+	bn = BN_new();
+	BN_set_word(bn, 3);
+
+	ret = RSA_generate_key_ex(rsa, 4096, bn, 0);
+	BN_free(bn);
+
+	if(!ret){
+		RSA_free(rsa);
+		abort();
+		goto err;
+	}
 
 	if (!EVP_PKEY_assign_RSA(pk, rsa)) {
 		abort();
 		goto err;
 	}
 
-	rsa = NULL;
+	RSA_free(rsa);
 
 	X509_set_version(x, 0);
 	ASN1_INTEGER_set(X509_get_serialNumber(x), serial);

@@ -63,7 +63,7 @@ typedef struct {
     v128_t offset;                 /* initial offset value             */
     v256_t key;
     int key_size;
-    EVP_CIPHER_CTX ctx;
+    EVP_CIPHER_CTX *ctx;
 } aes_icm_ctx_t;
 
 err_status_t aes_icm_openssl_set_iv(aes_icm_ctx_t *c, void *iv, int dir);

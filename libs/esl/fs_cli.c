@@ -50,7 +50,7 @@ static unsigned char esl_console_complete(const char *buffer, const char *cursor
 #endif
 
 typedef struct {
-	char name[128];
+	char name[256];
 	char host[128];
 	esl_port_t port;
 	char user[256];
@@ -75,9 +75,9 @@ static int is_color = 1;
 static int warn_stop = 0;
 static int connected = 0;
 static int allow_ctl_c = 0;
-static char bare_prompt_str[512] = "";
+static char bare_prompt_str[514] = "";
 static int bare_prompt_str_len = 0;
-static char prompt_str[512] = "";
+static char prompt_str[1024] = "";
 static char prompt_color[12] = {ESL_SEQ_DEFAULT_COLOR};
 static char input_text_color[12] = {ESL_SEQ_DEFAULT_COLOR};
 static char output_text_color[12] = {ESL_SEQ_DEFAULT_COLOR};
@@ -780,7 +780,8 @@ static void *msg_thread_run(esl_thread_t *me, void *obj)
 									char *c = handle->last_event->body;
 									printf("%s", handle->last_event->body);
 									if (*c) {
-										while (*c) ++c; c--;
+										while (*c) ++c;
+										c--;
 										if (*c != '\n')
 											printf("\n");
 									}
@@ -923,7 +924,7 @@ static int process_command(esl_handle_t *handle, const char *cmd)
 			output_printf("Unknown command [%s]\n", cmd);
 		}
 	} else {
-		char cmd_str[1024] = "";
+		char cmd_str[2048] = "";
 		const char *err = NULL;
 
 		if (!strncasecmp(cmd, "console loglevel ", 17)) { 
@@ -1248,7 +1249,7 @@ static void read_config(const char *dft_cfile, const char *cfile) {
 	if (esl_config_open_file(&cfg, cfile) ||
 		esl_config_open_file(&cfg, dft_cfile)) {
 		char *var, *val;
-		char cur_cat[128] = "";
+		char cur_cat[256] = "";
 		while (esl_config_next_pair(&cfg, &var, &val)) {
 			if (strcmp(cur_cat, cfg.category)) {
 				esl_set_string(cur_cat, cfg.category);
@@ -1345,7 +1346,7 @@ int main(int argc, char *argv[])
 	esl_handle_t handle = {{0}};
 	int count = 0;
 	const char *line = NULL;
-	char cmd_str[1024] = "";
+	char cmd_str[2048] = "";
 	cli_profile_t *profile = NULL;
 	int argv_use_history_file = 1;
 	int use_history_file = 0;

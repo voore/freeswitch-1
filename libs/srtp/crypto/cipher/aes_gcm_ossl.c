@@ -132,7 +132,8 @@ err_status_t aes_gcm_openssl_alloc (cipher_t **c, int key_len, int tlen)
 
     /* set key size        */
     (*c)->key_len = key_len;
-    EVP_CIPHER_CTX_init(&gcm->ctx);
+    gcm->ctx = EVP_CIPHER_CTX_new();
+    EVP_CIPHER_CTX_init(gcm->ctx);
 
     return (err_status_ok);
 }
@@ -147,7 +148,7 @@ err_status_t aes_gcm_openssl_dealloc (cipher_t *c)
 
     ctx = (aes_gcm_ctx_t*)c->state;
     if (ctx) {
-	EVP_CIPHER_CTX_cleanup(&ctx->ctx);
+	EVP_CIPHER_CTX_free(ctx->ctx);
         /* decrement ref_count for the appropriate engine */
         switch (ctx->key_size) {
         case AES_256_KEYSIZE:
@@ -193,7 +194,7 @@ err_status_t aes_gcm_openssl_context_init (aes_gcm_ctx_t *c, const uint8_t *key)
 
     debug_print(mod_aes_gcm, "key:  %s", v128_hex_string((v128_t*)&c->key));
 
-    EVP_CIPHER_CTX_cleanup(&c->ctx);
+    EVP_CIPHER_CTX_free(c->ctx);
 
     return (err_status_ok);
 }
@@ -228,19 +229,19 @@ err_status_t aes_gcm_openssl_set_iv (aes_gcm_ctx_t *c, void *iv,
         break;
     }
 
-    if (!EVP_CipherInit_ex(&c->ctx, evp, NULL, (const unsigned char*)&c->key.v8,
+    if (!EVP_CipherInit_ex(c->ctx, evp, NULL, (const unsigned char*)&c->key.v8,
                            NULL, (c->dir == direction_encrypt ? 1 : 0))) {
         return (err_status_init_fail);
     }
 
     /* set IV len  and the IV value, the followiong 3 calls are required */
-    if (!EVP_CIPHER_CTX_ctrl(&c->ctx, EVP_CTRL_GCM_SET_IVLEN, 12, 0)) {
+    if (!EVP_CIPHER_CTX_ctrl(c->ctx, EVP_CTRL_GCM_SET_IVLEN, 12, 0)) {
         return (err_status_init_fail);
     }
-    if (!EVP_CIPHER_CTX_ctrl(&c->ctx, EVP_CTRL_GCM_SET_IV_FIXED, -1, iv)) {
+    if (!EVP_CIPHER_CTX_ctrl(c->ctx, EVP_CTRL_GCM_SET_IV_FIXED, -1, iv)) {
         return (err_status_init_fail);
     }
-    if (!EVP_CIPHER_CTX_ctrl(&c->ctx, EVP_CTRL_GCM_IV_GEN, 0, iv)) {
+    if (!EVP_CIPHER_CTX_ctrl(c->ctx, EVP_CTRL_GCM_IV_GEN, 0, iv)) {
         return (err_status_init_fail);
     }
 
@@ -264,9 +265,9 @@ err_status_t aes_gcm_openssl_set_aad (aes_gcm_ctx_t *c, unsigned char *aad,
      * Set dummy tag, OpenSSL requires the Tag to be set before
      * processing AAD
      */
-    EVP_CIPHER_CTX_ctrl(&c->ctx, EVP_CTRL_GCM_SET_TAG, c->tag_len, aad);
+    EVP_CIPHER_CTX_ctrl(c->ctx, EVP_CTRL_GCM_SET_TAG, c->tag_len, aad);
 
-    rv = EVP_Cipher(&c->ctx, NULL, aad, aad_len);
+    rv = EVP_Cipher(c->ctx, NULL, aad, aad_len);
     if (rv != aad_len) {
         return (err_status_algo_fail);
     } else {
@@ -292,7 +293,7 @@ err_status_t aes_gcm_openssl_encrypt (aes_gcm_ctx_t *c, unsigned char *buf,
     /*
      * Encrypt the data
      */
-    EVP_Cipher(&c->ctx, buf, buf, *enc_len);
+    EVP_Cipher(c->ctx, buf, buf, *enc_len);
 
     return (err_status_ok);
 }
@@ -314,12 +315,12 @@ err_status_t aes_gcm_openssl_get_tag (aes_gcm_ctx_t *c, unsigned char *buf,
     /*
      * Calculate the tag
      */
-    EVP_Cipher(&c->ctx, NULL, NULL, 0);
+    EVP_Cipher(c->ctx, NULL, NULL, 0);
 
     /*
      * Retreive the tag
      */
-    EVP_CIPHER_CTX_ctrl(&c->ctx, EVP_CTRL_GCM_GET_TAG, c->tag_len, buf);
+    EVP_CIPHER_CTX_ctrl(c->ctx, EVP_CTRL_GCM_GET_TAG, c->tag_len, buf);
 
     /*
      * Increase encryption length by desired tag size
@@ -348,14 +349,14 @@ err_status_t aes_gcm_openssl_decrypt (aes_gcm_ctx_t *c, unsigned char *buf,
     /*
      * Set the tag before decrypting
      */
-    EVP_CIPHER_CTX_ctrl(&c->ctx, EVP_CTRL_GCM_SET_TAG, c->tag_len, 
+    EVP_CIPHER_CTX_ctrl(c->ctx, EVP_CTRL_GCM_SET_TAG, c->tag_len, 
 	                buf + (*enc_len - c->tag_len));
-    EVP_Cipher(&c->ctx, buf, buf, *enc_len - c->tag_len);
+    EVP_Cipher(c->ctx, buf, buf, *enc_len - c->tag_len);
 
     /*
      * Check the tag
      */
-    if (EVP_Cipher(&c->ctx, NULL, NULL, 0)) {
+    if (EVP_Cipher(c->ctx, NULL, NULL, 0)) {
         return (err_status_auth_fail);
     }
 

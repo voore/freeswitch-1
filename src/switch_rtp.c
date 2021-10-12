@@ -3122,7 +3122,7 @@ SWITCH_DECLARE(switch_status_t) switch_rtp_add_dtls(switch_rtp_t *rtp_session, d
 
 	dtls->ca = switch_core_sprintf(rtp_session->pool, "%s%sca-bundle.crt", SWITCH_GLOBAL_dirs.certs_dir, SWITCH_PATH_SEPARATOR);
 		
-	dtls->ssl_ctx = SSL_CTX_new(DTLSv1_method());
+	dtls->ssl_ctx = SSL_CTX_new(DTLS_method());
 	switch_assert(dtls->ssl_ctx);
 
 	bio = BIO_new_file(dtls->pem, "r");
