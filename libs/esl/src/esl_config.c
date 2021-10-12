@@ -38,7 +38,7 @@ ESL_DECLARE(int) esl_config_open_file(esl_config_t *cfg, const char *file_path)
 {
 	FILE *f;
 	const char *path = NULL;
-	char path_buf[1024];
+	char path_buf[512];
 
 	if (file_path[0] == '/') {
 		path = file_path;

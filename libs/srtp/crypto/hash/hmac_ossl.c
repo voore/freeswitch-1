@@ -107,10 +107,10 @@ hmac_dealloc (auth_t *a)
 
     hmac_ctx = (hmac_ctx_t*)a->state;
     if (hmac_ctx->ctx_initialized) {
-        EVP_MD_CTX_cleanup(&hmac_ctx->ctx);
+        EVP_MD_CTX_free(hmac_ctx->ctx);
     }
     if (hmac_ctx->init_ctx_initialized) {
-        EVP_MD_CTX_cleanup(&hmac_ctx->init_ctx);
+        EVP_MD_CTX_free(hmac_ctx->init_ctx);
     }
 
     /* zeroize entire state*/
@@ -157,11 +157,11 @@ hmac_init (hmac_ctx_t *state, const uint8_t *key, int key_len)
     debug_print(mod_hmac, "ipad: %s", octet_string_hex_string(ipad, 64));
 
     /* initialize sha1 context */
-    sha1_init(&state->init_ctx);
+    sha1_init(state->init_ctx);
     state->init_ctx_initialized = 1;
 
     /* hash ipad ^ key */
-    sha1_update(&state->init_ctx, ipad, 64);
+    sha1_update(state->init_ctx, ipad, 64);
     return (hmac_start(state));
 }
 
@@ -169,9 +169,9 @@ err_status_t
 hmac_start (hmac_ctx_t *state)
 {
     if (state->ctx_initialized) {
-        EVP_MD_CTX_cleanup(&state->ctx);
+        EVP_MD_CTX_free(state->ctx);
     }
-    if (!EVP_MD_CTX_copy(&state->ctx, &state->init_ctx)) {
+    if (!EVP_MD_CTX_copy(state->ctx, state->init_ctx)) {
         return err_status_auth_fail;
     } else {
         state->ctx_initialized = 1;
@@ -187,7 +187,7 @@ hmac_update (hmac_ctx_t *state, const uint8_t *message, int msg_octets)
                 octet_string_hex_string(message, msg_octets));
 
     /* hash message into sha1 context */
-    sha1_update(&state->ctx, message, msg_octets);
+    sha1_update(state->ctx, message, msg_octets);
 
     return err_status_ok;
 }
@@ -206,8 +206,8 @@ hmac_compute (hmac_ctx_t *state, const void *message,
     }
 
     /* hash message, copy output into H */
-    sha1_update(&state->ctx, message, msg_octets);
-    sha1_final(&state->ctx, H);
+    sha1_update(state->ctx, message, msg_octets);
+    sha1_final(state->ctx, H);
 
     /*
      * note that we don't need to debug_print() the input, since the
@@ -217,16 +217,16 @@ hmac_compute (hmac_ctx_t *state, const void *message,
                 octet_string_hex_string((uint8_t*)H, 20));
 
     /* re-initialize hash context */
-    sha1_init(&state->ctx);
+    sha1_init(state->ctx);
 
     /* hash opad ^ key  */
-    sha1_update(&state->ctx, (uint8_t*)state->opad, 64);
+    sha1_update(state->ctx, (uint8_t*)state->opad, 64);
 
     /* hash the result of the inner hash */
-    sha1_update(&state->ctx, (uint8_t*)H, 20);
+    sha1_update(state->ctx, (uint8_t*)H, 20);
 
     /* the result is returned in the array hash_value[] */
-    sha1_final(&state->ctx, hash_value);
+    sha1_final(state->ctx, hash_value);
 
     /* copy hash_value to *result */
     for (i = 0; i < tag_len; i++) {

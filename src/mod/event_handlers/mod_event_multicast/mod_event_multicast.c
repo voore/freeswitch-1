@@ -291,7 +291,7 @@ static void event_handler(switch_event_t *event)
 				char *buf;
 #ifdef HAVE_OPENSSL
 				int outlen, tmplen;
-				EVP_CIPHER_CTX ctx;
+				EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
 				char uuid_str[SWITCH_UUID_FORMATTED_LENGTH + 1];
 				switch_uuid_t uuid;
 
@@ -309,17 +309,17 @@ static void event_handler(switch_event_t *event)
 				if (globals.psk) {
 					switch_copy_string(buf, uuid_str, SWITCH_UUID_FORMATTED_LENGTH);
 
-					EVP_CIPHER_CTX_init(&ctx);
-					EVP_EncryptInit(&ctx, EVP_bf_cbc(), NULL, NULL);
-					EVP_CIPHER_CTX_set_key_length(&ctx, strlen(globals.psk));
-					EVP_EncryptInit(&ctx, NULL, (unsigned char *) globals.psk, (unsigned char *) uuid_str);
-					EVP_EncryptUpdate(&ctx, (unsigned char *) buf + SWITCH_UUID_FORMATTED_LENGTH,
+					EVP_CIPHER_CTX_init(ctx);
+					EVP_EncryptInit(ctx, EVP_bf_cbc(), NULL, NULL);
+					EVP_CIPHER_CTX_set_key_length(ctx, strlen(globals.psk));
+					EVP_EncryptInit(ctx, NULL, (unsigned char *) globals.psk, (unsigned char *) uuid_str);
+					EVP_EncryptUpdate(ctx, (unsigned char *) buf + SWITCH_UUID_FORMATTED_LENGTH,
 									  &outlen, (unsigned char *) packet, (int) strlen(packet));
-					EVP_EncryptUpdate(&ctx, (unsigned char *) buf + SWITCH_UUID_FORMATTED_LENGTH + outlen,
+					EVP_EncryptUpdate(ctx, (unsigned char *) buf + SWITCH_UUID_FORMATTED_LENGTH + outlen,
 									  &tmplen, (unsigned char *) MAGIC, (int) strlen((char *) MAGIC));
 					outlen += tmplen;
-					EVP_EncryptFinal(&ctx, (unsigned char *) buf + SWITCH_UUID_FORMATTED_LENGTH + outlen, &tmplen);
-					EVP_CIPHER_CTX_cleanup(&ctx);
+					EVP_EncryptFinal(ctx, (unsigned char *) buf + SWITCH_UUID_FORMATTED_LENGTH + outlen, &tmplen);
+					EVP_CIPHER_CTX_free(ctx);
 					outlen += tmplen;
 					len = (size_t) outlen + SWITCH_UUID_FORMATTED_LENGTH;
 					*(buf + SWITCH_UUID_FORMATTED_LENGTH + outlen) = '\0';
@@ -530,7 +530,7 @@ SWITCH_MODULE_RUNTIME_FUNCTION(mod_event_multicast_runtime)
 			char uuid_str[SWITCH_UUID_FORMATTED_LENGTH + 1];
 			char *tmp;
 			int outl, tmplen;
-			EVP_CIPHER_CTX ctx;
+			EVP_CIPHER_CTX ctx = EVP_CIPHER_CTX_new();
 
 			len -= SWITCH_UUID_FORMATTED_LENGTH;
 
@@ -541,13 +541,13 @@ SWITCH_MODULE_RUNTIME_FUNCTION(mod_event_multicast_runtime)
 			switch_copy_string(uuid_str, packet, SWITCH_UUID_FORMATTED_LENGTH);
 			packet += SWITCH_UUID_FORMATTED_LENGTH;
 
-			EVP_CIPHER_CTX_init(&ctx);
-			EVP_DecryptInit(&ctx, EVP_bf_cbc(), NULL, NULL);
-			EVP_CIPHER_CTX_set_key_length(&ctx, strlen(globals.psk));
-			EVP_DecryptInit(&ctx, NULL, (unsigned char *) globals.psk, (unsigned char *) uuid_str);
-			EVP_DecryptUpdate(&ctx, (unsigned char *) tmp, &outl, (unsigned char *) packet, (int) len);
-			EVP_DecryptFinal(&ctx, (unsigned char *) tmp + outl, &tmplen);
-			EVP_CIPHER_CTX_cleanup(&ctx);
+			EVP_CIPHER_CTX_init(ctx);
+			EVP_DecryptInit(ctx, EVP_bf_cbc(), NULL, NULL);
+			EVP_CIPHER_CTX_set_key_length(ctx, strlen(globals.psk));
+			EVP_DecryptInit(ctx, NULL, (unsigned char *) globals.psk, (unsigned char *) uuid_str);
+			EVP_DecryptUpdate(ctx, (unsigned char *) tmp, &outl, (unsigned char *) packet, (int) len);
+			EVP_DecryptFinal(ctx, (unsigned char *) tmp + outl, &tmplen);
+			EVP_CIPHER_CTX_free(ctx);
 			*(tmp + outl + tmplen) = '\0';
 
 			/*switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_DEBUG, "decrypted event as %s\n----------\n of actual length %d (%d) %d\n", tmp, outl + tmplen, (int) len, (int) strlen(tmp)); */

@@ -55,7 +55,7 @@ typedef struct {
   v256_t   key;
   int      key_size;
   int      tag_len;
-  EVP_CIPHER_CTX ctx;
+  EVP_CIPHER_CTX *ctx;
   cipher_direction_t dir;
 } aes_gcm_ctx_t;
 

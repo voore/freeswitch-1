@@ -1473,7 +1473,7 @@ SWITCH_DECLARE(switch_status_t) switch_ivr_play_file(switch_core_session_t *sess
 				}
 			}
 
-			buflen = FILE_STARTSAMPLES * sizeof(*abuf) * fh->cur_channels ? fh->cur_channels : fh->channels;
+			buflen = FILE_STARTSAMPLES * sizeof(*abuf) * (fh->cur_channels > 0 ? fh->cur_channels : fh->channels); 
 
 			if (buflen > write_frame.buflen) {
 				abuf = realloc(abuf, buflen);
@@ -2245,10 +2245,10 @@ SWITCH_DECLARE(switch_status_t) switch_ivr_speak_text_handle(switch_core_session
 		tp = tmp;
 		for (p = text; p && *p; p++) {
 			if (*p == '*') {
-				strncat(tp, star, starlen);
+				snprintf(tp + strlen(tp), sizeof(tp) - strlen(tp), "%s", star);
 				tp += starlen;
 			} else if (*p == '#') {
-				strncat(tp, pound, poundlen);
+				snprintf(tp + strlen(tp), sizeof(tp) - strlen(tp), "%s", pound);
 				tp += poundlen;
 			} else {
 				*tp++ = *p;

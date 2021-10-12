@@ -496,11 +496,11 @@ tls_t *tls_init_master(tls_issues_t *ti)
     return NULL;
   }
 
-  RAND_pseudo_bytes(sessionId, sizeof(sessionId));
+  RAND_bytes(sessionId, sizeof(sessionId));
 
   SSL_CTX_set_session_id_context(tls->ctx,
-                                 (void*) sessionId,
-				 sizeof(sessionId));
+                                (void*) sessionId,
+				                        sizeof(sessionId));
 
   if (ti->CAfile != NULL)
     SSL_CTX_set_client_CA_list(tls->ctx,

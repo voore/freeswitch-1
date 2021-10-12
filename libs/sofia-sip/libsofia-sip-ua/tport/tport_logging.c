@@ -45,6 +45,8 @@
 #include <errno.h>
 #include <limits.h>
 
+#define TPORT_STAMP_SIZE 144
+
 /**@var TPORT_LOG
  *
  * Environment variable determining if parsed message contents are logged.
@@ -143,7 +145,7 @@ int tport_open_log(tport_master_t *mr, tagi_t *tags)
         char *captname, *p, *host_s;
         char port[10];
         su_addrinfo_t *ai = NULL, hints[1] = {{ 0 }};
-        unsigned len =0;
+        unsigned len =0, iport=0;
 
         if (mr->mr_capt_name && mr->mr_capt_sock && strcmp(capt, mr->mr_capt_name) == 0)                
               return n;
@@ -174,13 +176,15 @@ int tport_open_log(tport_master_t *mr, tagi_t *tags)
         *p = '\0';
         p++;
 
-        if (atoi(p) <1024  || atoi(p)>65536)
+        iport = atoi(p);
+
+        if (iport <1024  || iport >65536)
         {
                 su_log("invalid port number; must be in [1024,65536]\n");
                 return n;
         }
 
-        strncpy(port, p, sizeof(port));
+        snprintf(port, sizeof(port), "%d", iport);
                         
         *p = '\0'; 
         
@@ -313,7 +317,7 @@ void tport_stamp(tport_t const *self, msg_t *msg,
 
   su_inet_ntop(su->su_family, SU_ADDR(su), name, sizeof(name));
 
-  snprintf(stamp, 128,
+  snprintf(stamp, TPORT_STAMP_SIZE,
 	   "%s "MOD_ZU" bytes %s %s/[%s]:%u%s%s at %02u:%02u:%02u.%06lu:\n",
 	   what, (size_t)n, via, self->tp_name->tpn_proto,
 	   name, ntohs(su->su_port), label[0] ? label : "", comp,
@@ -326,7 +330,7 @@ void tport_dump_iovec(tport_t const *self, msg_t *msg,
 		      char const *what, char const *how)
 {
   tport_master_t *mr;
-  char stamp[128];
+  char stamp[TPORT_STAMP_SIZE];
   size_t i;
 
   assert(self); assert(msg);

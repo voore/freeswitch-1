@@ -158,7 +158,8 @@ err_status_t aes_icm_openssl_alloc (cipher_t **c, int key_len, int tlen)
 
     /* set key size        */
     (*c)->key_len = key_len;
-    EVP_CIPHER_CTX_init(&icm->ctx);
+    icm->ctx = EVP_CIPHER_CTX_new();
+    EVP_CIPHER_CTX_init(icm->ctx);
 
     return err_status_ok;
 }
@@ -180,7 +181,7 @@ err_status_t aes_icm_openssl_dealloc (cipher_t *c)
      */
     ctx = (aes_icm_ctx_t*)c->state;
     if (ctx != NULL) {
-        EVP_CIPHER_CTX_cleanup(&ctx->ctx);
+        EVP_CIPHER_CTX_free(ctx->ctx);
         /* decrement ref_count for the appropriate engine */
         switch (ctx->key_size) {
         case AES_256_KEYSIZE:
@@ -250,7 +251,7 @@ err_status_t aes_icm_openssl_context_init (aes_icm_ctx_t *c, const uint8_t *key)
     debug_print(mod_aes_icm, "key:  %s", v128_hex_string((v128_t*)&c->key));
     debug_print(mod_aes_icm, "offset: %s", v128_hex_string(&c->offset));
 
-    EVP_CIPHER_CTX_cleanup(&c->ctx);
+    EVP_CIPHER_CTX_free(c->ctx);
 
     return err_status_ok;
 }
@@ -286,7 +287,7 @@ err_status_t aes_icm_openssl_set_iv (aes_icm_ctx_t *c, void *iv, int dir)
         break;
     }
 
-    if (!EVP_EncryptInit_ex(&c->ctx, evp,
+    if (!EVP_EncryptInit_ex(c->ctx, evp,
                             NULL, c->key.v8, c->counter.v8)) {
         return err_status_fail;
     } else {
@@ -308,12 +309,12 @@ err_status_t aes_icm_openssl_encrypt (aes_icm_ctx_t *c, unsigned char *buf, unsi
 
     debug_print(mod_aes_icm, "rs0: %s", v128_hex_string(&c->counter));
 
-    if (!EVP_EncryptUpdate(&c->ctx, buf, &len, buf, *enc_len)) {
+    if (!EVP_EncryptUpdate(c->ctx, buf, &len, buf, *enc_len)) {
         return err_status_cipher_fail;
     }
     *enc_len = len;
 
-    if (!EVP_EncryptFinal_ex(&c->ctx, buf, (int*)&len)) {
+    if (!EVP_EncryptFinal_ex(c->ctx, buf, (int*)&len)) {
         return err_status_cipher_fail;
     }
     *enc_len += len;
