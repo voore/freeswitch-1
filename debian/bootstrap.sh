@@ -19,6 +19,8 @@ avoid_mods=(
   applications/mod_skel
   applications/mod_cluechoo
   asr_tts/mod_cepstral
+  asr_tts/mod_pocketsphinx
+  asr_tts/mod_flite
   codecs/mod_ilbc
   codecs/mod_sangoma_codec
   codecs/mod_siren

@@ -31,12 +31,3 @@ RUN apt-get update -yq && apt-get -yq install \
                                  libldns-dev \
                                  libpq-dev \
                                  dpkg-dev
-
-COPY freeswitch-1 /usr/src/freeswitch
-
-WORKDIR /usr/src/freeswitch
-
-#RUN ./bootstrap.sh -j \
-# && ./configure \
-# && make \
-# && make install
