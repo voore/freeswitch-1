@@ -24,6 +24,7 @@ avoid_mods=(
   codecs/mod_siren
   codecs/mod_skel_codec
   codecs/mod_com_g729
+  codecs/mod_opus
   directories/mod_ldap
   endpoints/mod_gsmopen
   endpoints/mod_h323

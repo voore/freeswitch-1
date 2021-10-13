@@ -170,7 +170,6 @@ create_orig () {
     local treeish="$1" dver="$(mk_dver "$uver")"
     local orig="../freeswitch_$dver.orig.tar.xz"
     [ -n "$treeish" ] || treeish="HEAD"
-    check_repo_clean
     git reset --hard "$treeish"
     mv .gitattributes .gitattributes.orig
     local -a args=(-e '\bdebian-ignore\b')
