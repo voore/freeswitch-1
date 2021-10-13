@@ -371,7 +371,7 @@ default_distros () {
   local host_distro="Debian"
   test -z "$(which lsb_release)" || host_distro="$(lsb_release -is)"
   case "$host_distro" in
-    Debian) echo "sid jessie wheezy" ;;
+    Debian) echo "sid jessie wheezy buster" ;;
     Ubuntu) echo "utopic trusty" ;;
     *) err "Unknown host distribution \"$host_distro\"" ;;
   esac
@@ -406,7 +406,7 @@ build_all () {
   shift $(($OPTIND-1))
   [ -n "$archs" ] || archs="amd64 i386"
   [ -n "$distros" ] || distros="$(default_distros)"
-  ! $depinst || aptitude install -y \
+  ! $depinst || apt-get install -y \
     rsync git less cowbuilder ccache \
     devscripts equivs build-essential
   [ -n "$orig" ] || orig="$(create_orig $orig_opts HEAD | tail -n1)"
