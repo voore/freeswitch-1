@@ -17,7 +17,7 @@ phases:
       - dpkg-buildpackage -b -rfakeroot -us -uc
       - s3cmd --verbose --delete-removed --follow-symlinks  sync s3://s3-apt-repo/ /opt/
       - reprepro -b /opt/repo includedeb production ../*.deb
-      - s3cmd --verbose --delete-removed --follow-symlinks  sync s3://s3-apt-repo/ /opt/repo/
+      - s3cmd --verbose --delete-removed --follow-symlinks  sync  /opt/repo/ s3://s3-apt-repo/
   post_build:
     commands:
       - echo Build completed on `date`
