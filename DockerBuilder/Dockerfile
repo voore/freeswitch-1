@@ -30,4 +30,6 @@ RUN apt-get update -yq && apt-get -yq install \
                                  libedit-dev \
                                  libldns-dev \
                                  libpq-dev \
-                                 dpkg-dev
+                                 dpkg-dev \
+                                 reprepro \
+                                 s3cmd

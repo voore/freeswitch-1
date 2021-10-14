@@ -15,6 +15,9 @@ phases:
       - mk-build-deps -i  -t "apt-get -o Debug::pkgProblemResolver=yes --no-install-recommends -y"
       - make -f debian/rules .stamp-configure
       - dpkg-buildpackage -b -rfakeroot -us -uc
+      - s3cmd --verbose --delete-removed --follow-symlinks  sync s3://s3-apt-repo/ /opt/
+      - reprepro -b /opt/repo includedeb production ../*.deb
+      - s3cmd --verbose --delete-removed --follow-symlinks  sync s3://s3-apt-repo/ /opt/repo/
   post_build:
     commands:
       - echo Build completed on `date`
