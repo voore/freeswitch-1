@@ -300,7 +300,7 @@ list_freeswitch_all_dbg_replaces () {
 print_source_control () {
   local libtool_dep="libtool, libtool-bin"
   case "$codename" in
-    squeeze|wheezy|trusty) libtool_dep="libtool" ;;
+    squeeze|wheezy|trusty|buster) libtool_dep="libtool" ;;
   esac
 cat <<EOF
 Source: freeswitch
