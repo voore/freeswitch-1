@@ -1,4 +1,5 @@
-freeswtich (1.4.0) unstable: urgency=low
+freeswitch (1.4.0) unstable: urgency=low
+
   * Bump version.
 
  -- Alfonso Pinto <alfonso@mongotel.com> Fri, 15 Oct 2021 21:24:00 +0200
