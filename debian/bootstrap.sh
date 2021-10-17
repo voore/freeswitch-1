@@ -7,7 +7,7 @@ conf_dir="../conf"
 lang_dir="../conf/vanilla/lang"
 fs_description="FreeSWITCH is a scalable open source cross-platform telephony platform designed to route and interconnect popular communication protocols using audio, video, text or any other form of media."
 mod_build_depends="." mod_depends="." mod_recommends="." mod_suggests="."
-supported_debian_distros="squeeze wheezy jessie sid"
+supported_debian_distros="squeeze wheezy jessie buster sid"
 supported_ubuntu_distros="trusty utopic"
 supported_distros="$supported_debian_distros $supported_ubuntu_distros"
 avoid_mods=(
@@ -19,18 +19,31 @@ avoid_mods=(
   applications/mod_skel
   applications/mod_cluechoo
   asr_tts/mod_cepstral
-  codecs/mod_com_g729
+  asr_tts/mod_pocketsphinx
+  asr_tts/mod_flite
   codecs/mod_ilbc
   codecs/mod_sangoma_codec
   codecs/mod_siren
   codecs/mod_skel_codec
+  codecs/mod_com_g729
+  codecs/mod_opus
+  directories/mod_ldap
   endpoints/mod_gsmopen
   endpoints/mod_h323
   endpoints/mod_khomp
   endpoints/mod_opal
   endpoints/mod_reference
   endpoints/mod_unicall
+  endpoints/mod_dingaling
+  endpoints/mod_skypopen
+  event_handlers/mod_event_multicast
+  event_handlers/mod_amqp
+  event_handlers/mod_cdr_mongodb
   languages/mod_managed
+  languages/mod_java
+  languages/mod_perl
+  languages/mod_v8
+  say/mod_say_ja
   sdk/autotools
   xml_int/mod_xml_ldap
   xml_int/mod_xml_radius
@@ -287,7 +300,7 @@ list_freeswitch_all_dbg_replaces () {
 print_source_control () {
   local libtool_dep="libtool, libtool-bin"
   case "$codename" in
-    squeeze|wheezy|trusty) libtool_dep="libtool" ;;
+    squeeze|wheezy|trusty|buster) libtool_dep="libtool" ;;
   esac
 cat <<EOF
 Source: freeswitch

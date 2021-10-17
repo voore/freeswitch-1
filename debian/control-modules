@@ -564,7 +564,7 @@ Module: formats/mod_vlc
 Description: VLC streaming
  This module provides VLC streaming.
 Build-Depends: libvlc-dev (>= 2.0.0)
-Depends: vlc-nox
+Depends: vlc-bin, vlc-plugin-base
 Suggests: vlc-dbg
 Distro-Conflicts: squeeze
 

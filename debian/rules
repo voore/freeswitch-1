@@ -70,10 +70,10 @@ override_dh_auto_clean:
 	@$(call show_vars)
 	touch noreg
 	cp debian/modules_.conf modules.conf
-	./configure -C --enable-portable-binary --disable-dependency-tracking \
+	./configure -C --disable-dependency-tracking \
 		--host=$(DEB_HOST_GNU_TYPE) --build=$(DEB_BUILD_GNU_TYPE) \
 		--with-gnu-ld --with-python --with-erlang --with-openssl \
-		--enable-core-odbc-support --enable-zrtp \
+		--enable-core-odbc-support \
 		--enable-core-pgsql-support \
 		--prefix=/usr --localstatedir=/var \
 		--sysconfdir=/etc/freeswitch \
