@@ -20,6 +20,7 @@ phases:
       - reprepro -b /opt/repo includedeb production ../*.deb
       - cd $CODEBUILD_SRC_DIR_sounds
       - ./debian.sh freeswitch-sounds-en-us-callie
+      - ./debian.sh freeswitch-music-default
       - reprepro -b /opt/repo includedeb production ../*.deb
       - s3cmd --verbose --delete-removed --follow-symlinks  sync  /opt/repo/ s3://s3-apt-repo/
   post_build:
