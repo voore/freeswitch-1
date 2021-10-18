@@ -32,4 +32,6 @@ RUN apt-get update -yq && apt-get -yq install \
                                  libpq-dev \
                                  dpkg-dev \
                                  reprepro \
+                                 sox \
+                                 flac \
                                  s3cmd
