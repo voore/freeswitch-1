@@ -15,6 +15,8 @@ phases:
       - mk-build-deps -i  -t "apt-get -o Debug::pkgProblemResolver=yes --no-install-recommends -y"
       - make -f debian/rules .stamp-configure
       - dpkg-buildpackage -b -rfakeroot -us -uc
+      - cd $CODEBUILD_SRC_DIR_sounds
+      - ./debian.sh
       - s3cmd --verbose --delete-removed --follow-symlinks  sync s3://s3-apt-repo/ /opt/repo/
       - reprepro -b /opt/repo includedeb production ../*.deb
       - s3cmd --verbose --delete-removed --follow-symlinks  sync  /opt/repo/ s3://s3-apt-repo/
